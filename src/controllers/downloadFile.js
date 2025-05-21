@@ -2,91 +2,83 @@
 
 import connectDB from '../db/index.js';
 
-export const downloadCustomerData = async (req, res) => {
-    console.log('Download request received:', req.query);
-    const pool = await connectDB();
-    const connection = await pool.getConnection();
-
+export const getQueueNames = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        console.log('Dates received:', { startDate, endDate });
-
-        if (!startDate || !endDate) {
-            console.log('Missing dates');
-            return res.status(400).json({ message: 'Start date and end date are required' });
-        }
-
-        // Get user information
-        const userId = req.user?.userId;
-        console.log('User ID:', userId);
-
-        const [userResult] = await connection.query(
-            'SELECT u.*, r.role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?',
-            [userId]
-        );
-        console.log('User result:', userResult[0]);
-
-        if (userResult.length === 0) {
-            return res.status(401).json({ message: 'User not found' });
-        }
-
-        const user = userResult[0];
-        console.log('User role and team:', { role: user.role_name, team_id: user.team_id, username: user.username });
-
-        let query = `
-            SELECT DISTINCT
-                c.first_name, c.last_name, c.middle_name, 
-                c.gender, c.email_id,
-                c.phone_no_primary, c.phone_no_secondary, c.whatsapp_num,
-                c.address, c.country, c.contact_type, c.company_name,
-                c.dispositition, c.other_location,
-                c.designation, c.website, c.agent_name,
-                c.C_unique_id, c.date_created, c.last_updated,
-                c.scheduled_at
-            FROM customers c
-            INNER JOIN users agent_user ON c.agent_name = agent_user.username
-            WHERE DATE(c.date_created) BETWEEN DATE(?) AND DATE(?)
+        const db = connectDB();
+        // Simpler query without joins initially to debug
+        const sql = `
+            SELECT DISTINCT QUEUE_NAME 
+            FROM customers 
+            WHERE QUEUE_NAME IS NOT NULL 
+            ORDER BY QUEUE_NAME
         `;
 
-        const params = [startDate, endDate];
+        const [results] = await db.query(sql);
+        console.log('Queue names results:', results); // Debug log
 
-        // Apply role-based filters
-        if (!['super_admin', 'it_admin', 'business_head'].includes(user.role_name)) {
-            if (user.role_name === 'team_leader') {
-                // Team leaders can see all data from their team
-                query += ' AND agent_user.team_id = ?';
-                params.push(user.team_id);
-                console.log('Applying team filter for team leader:', user.team_id);
-            } else {
-                // Regular users can only see their own assigned records
-                query += ' AND c.agent_name = ?';
-                params.push(user.username);
-                console.log('Filtering by agent name:', user.username);
-            }
+        return res.json({
+            success: true,
+            data: results
+        });
+    } catch (error) {
+        console.error('Database error in getQueueNames:', error);
+        return res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch queue names'
+        });
+    }
+};
+
+export const downloadCustomerData = async (req, res) => {
+    try {
+        const db = connectDB();
+        const { startDate, endDate, queueName } = req.query;
+
+        // Validate required parameters
+        if (!startDate || !endDate || !queueName) {
+            return res.status(400).json({ 
+                success: false,
+                message: 'Start date, end date, and queue name are required' 
+            });
         }
 
-        query += ' ORDER BY c.date_created DESC';
-        
-        console.log('Final query:', query);
-        console.log('Query params:', params);
+        // Simpler query without joins initially
+        const sql = `
+            SELECT 
+                id,
+                C_unique_id,
+                customer_name,
+                phone_no_primary,
+                phone_no_secondary,
+                email_id,
+                address,
+                country,
+                QUEUE_NAME,
+                disposition,
+                agent_name,
+                comment,
+                date_created,
+                last_updated,
+                scheduled_at
+            FROM customers
+            WHERE date_created BETWEEN ? AND ?
+            AND QUEUE_NAME = ?
+            ORDER BY date_created DESC
+        `;
 
-        const [results] = await connection.query(query, params);
-        console.log('Query results count:', results.length);
+        const [results] = await db.query(sql, [startDate, endDate, queueName]);
+        console.log('Download results count:', results.length); // Debug log
 
-        res.json({
+        return res.json({
             success: true,
-            data: results,
-            query: { startDate, endDate },
-            userRole: user.role_name
+            data: results
         });
 
     } catch (error) {
-        console.error('Error downloading data:', error);
-        res.status(500).json({ 
-            message: 'Error downloading data',
-            error: error.message 
+        console.error('Database error in downloadCustomerData:', error);
+        return res.status(500).json({ 
+            success: false, 
+            message: 'Failed to download customer data'
         });
-    } finally {
-        connection.release();
     }
 };

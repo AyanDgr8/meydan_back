@@ -23,7 +23,9 @@ export const authenticateToken = async (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         console.log('Decoded token:', decoded);
 
-        if (!decoded.userId || !decoded.role) {
+        // Support both id and userId in token payload
+        const userId = decoded.userId || decoded.id;
+        if (!userId) {
             console.error('Invalid token payload:', decoded);
             return res.status(401).json({ 
                 success: false,
@@ -31,40 +33,15 @@ export const authenticateToken = async (req, res, next) => {
             });
         }
 
-        // Get current permissions from database
         const pool = await connectDB();
         const connection = await pool.getConnection();
         try {
-            const [users] = await connection.query(`
-                SELECT GROUP_CONCAT(p.permission_name) as permissions
-                FROM users u
-                LEFT JOIN user_permissions up ON u.id = up.user_id
-                LEFT JOIN permissions p ON up.permission_id = p.id AND up.value = true
-                WHERE u.id = ?
-                GROUP BY u.id
-            `, [decoded.userId]);
-
-            const currentPermissions = users[0]?.permissions ? users[0].permissions.split(',') : [];
-
-            // Log the difference between token and database permissions
-            console.log('Token permissions:', decoded.permissions);
-            console.log('Database permissions:', currentPermissions);
-            const removedPermissions = decoded.permissions?.filter(p => !currentPermissions.includes(p)) || [];
-            const addedPermissions = currentPermissions.filter(p => !decoded.permissions?.includes(p)) || [];
-            if (removedPermissions.length > 0) {
-                console.log('Permissions removed since token generation:', removedPermissions);
-            }
-            if (addedPermissions.length > 0) {
-                console.log('Permissions added since token generation:', addedPermissions);
-            }
 
             req.user = {
-                userId: decoded.userId,
+                userId: userId,
                 username: decoded.username,
                 email: decoded.email,
-                role: decoded.role,
-                team_id: decoded.team_id ? parseInt(decoded.team_id) : null,
-                permissions: currentPermissions // Use current permissions from database
+                // team_id: decoded.team_id ? parseInt(decoded.team_id) : null
             };
 
             console.log('Set request user:', req.user);
@@ -76,11 +53,4 @@ export const authenticateToken = async (req, res, next) => {
         console.error('Token verification error:', error);
         return res.status(401).json({ message: "Invalid token." });
     }
-};
-
-export const checkUploadAccess = (req, res, next) => {
-    if (req.user.role !== 'super_admin' && req.user.role !== 'it_admin') {
-        return res.status(403).json({ message: "Access denied. Insufficient permissions." });
-    }
-    next();
 };

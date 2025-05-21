@@ -29,7 +29,6 @@ export const checkCustomerByPhone = async (req, res) => {
   }
 };
 
-
 export const insertPrimaryNum = async(req, res)=>{
   const { phone_no_primary } = req.params;
 

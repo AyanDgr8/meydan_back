@@ -16,19 +16,17 @@ export const getReminders = async (req, res) => {
 
         const username = req.user.username;
 
-        // Get user's role and team
+        // Get user's team info
         const [userInfo] = await connection.execute(`
-            SELECT u.role_id, r.role_name, u.team_id, u.id as user_id
-            FROM users u
-            JOIN roles r ON r.id = u.role_id
-            WHERE u.username = ?
+            SELECT tm.id as user_id, tm.team_id
+            FROM team_members tm
+            WHERE tm.username = ?
         `, [username]);
 
         if (!userInfo.length) {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const role = userInfo[0].role_name;
         const teamId = userInfo[0].team_id;
         const userId = userInfo[0].user_id;
 
@@ -48,56 +46,25 @@ export const getReminders = async (req, res) => {
 
         // Base fields to select
         const baseFields = `
-            s.*, c.*, u.team_id,
+            s.*, c.*, tm.team_id,
             TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) as minutes_until_call
         `;
 
-        if (role === 'super_admin' || role === 'it_admin' || role === 'business_head') {
-            // Can see reminders they created or are assigned to them
-            sql = `
-                SELECT ${baseFields}
-                FROM scheduler s
-                JOIN customers c ON c.id = s.customer_id
-                LEFT JOIN users u ON u.username = s.assigned_to
-                WHERE (
-                    s.created_by = ? -- reminders they created
-                    OR s.assigned_to = ? -- reminders assigned to them
-                )
-                AND ${timeCondition}
-                AND s.status = 'pending'
-                ORDER BY s.scheduled_at ASC
-            `;
-            params.push(userId, username);
-        } else if (role === 'team_leader') {
-            // Can see reminders they created for their team or assigned to them
-            sql = `
-                SELECT ${baseFields}
-                FROM scheduler s
-                JOIN customers c ON c.id = s.customer_id
-                JOIN users u ON u.username = s.assigned_to
-                WHERE (
-                    (s.created_by = ? AND u.team_id = ?) -- reminders they created for their team
-                    OR s.assigned_to = ? -- reminders assigned to them
-                )
-                AND ${timeCondition}
-                AND s.status = 'pending'
-                ORDER BY s.scheduled_at ASC
-            `;
-            params.push(userId, teamId, username);
-        } else {
-            // Regular users - can only see reminders assigned to them
-            sql = `
-                SELECT ${baseFields}
-                FROM scheduler s
-                JOIN customers c ON c.id = s.customer_id
-                JOIN users u ON u.username = s.assigned_to
-                WHERE s.assigned_to = ?
-                AND ${timeCondition}
-                AND s.status = 'pending'
-                ORDER BY s.scheduled_at ASC
-            `;
-            params.push(username);
-        }
+        // All users can see reminders they created or are assigned to them
+        sql = `
+            SELECT ${baseFields}
+            FROM scheduler s
+            JOIN customers c ON c.id = s.customer_id
+            LEFT JOIN team_members tm ON tm.username = s.assigned_to
+            WHERE (
+                s.created_by = ? -- reminders they created
+                OR s.assigned_to = ? -- reminders assigned to them
+            )
+            AND ${timeCondition}
+            AND s.status = 'pending'
+            ORDER BY s.scheduled_at ASC
+        `;
+        params.push(userId, username);
 
         const [rows] = await connection.execute(sql, params);
 
@@ -147,20 +114,17 @@ export const getAllReminders = async (req, res) => {
 
         const username = req.user.username;
 
-        // Get user's role and team
+        // Get user's team info
         const [userInfo] = await connection.execute(`
-            SELECT u.role_id, r.role_name, u.team_id, u.id as user_id, t.team_name
-            FROM users u
-            JOIN roles r ON r.id = u.role_id
-            LEFT JOIN teams t ON t.id = u.team_id
-            WHERE u.username = ?
+            SELECT tm.id as user_id, tm.team_id
+            FROM team_members tm
+            WHERE tm.username = ?
         `, [username]);
 
         if (!userInfo.length) {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const role = userInfo[0].role_name;
         const teamId = userInfo[0].team_id;
         const userId = userInfo[0].user_id;
 
@@ -169,7 +133,7 @@ export const getAllReminders = async (req, res) => {
 
         // Base fields to select
         const baseFields = `
-            s.*, c.*, u.team_id, t.team_name,
+            s.*, c.*, tm.team_id,
             TIMESTAMPDIFF(MINUTE, NOW(), s.scheduled_at) as minutes_until_call
         `;
 
@@ -179,55 +143,21 @@ export const getAllReminders = async (req, res) => {
             AND s.scheduled_at > NOW()
         `;
 
-        if (role === 'super_admin' || role === 'it_admin' || role === 'business_head') {
-            // Can see reminders they created or are assigned to them
-            sql = `
-                SELECT ${baseFields}
-                FROM scheduler s
-                JOIN customers c ON c.id = s.customer_id
-                LEFT JOIN users u ON u.username = s.assigned_to
-                LEFT JOIN teams t ON t.id = u.team_id
-                WHERE (
-                    s.created_by = ? -- reminders they created
-                    OR s.assigned_to = ? -- reminders assigned to them
-                )
-                AND ${timeCondition}
-                AND s.status = 'pending'
-                ORDER BY s.scheduled_at ASC
-            `;
-            params.push(userId, username);
-        } else if (role === 'team_leader') {
-            // Can see reminders they created for their team or assigned to them
-            sql = `
-                SELECT ${baseFields}
-                FROM scheduler s
-                JOIN customers c ON c.id = s.customer_id
-                JOIN users u ON u.username = s.assigned_to
-                LEFT JOIN teams t ON t.id = u.team_id
-                WHERE (
-                    (s.created_by = ? AND u.team_id = ?) -- reminders they created for their team
-                    OR s.assigned_to = ? -- reminders assigned to them
-                )
-                AND ${timeCondition}
-                AND s.status = 'pending'
-                ORDER BY s.scheduled_at ASC
-            `;
-            params.push(userId, teamId, username);
-        } else {
-            // Regular users - can only see reminders assigned to them
-            sql = `
-                SELECT ${baseFields}
-                FROM scheduler s
-                JOIN customers c ON c.id = s.customer_id
-                LEFT JOIN users u ON u.username = s.assigned_to
-                LEFT JOIN teams t ON t.id = u.team_id
-                WHERE s.assigned_to = ?
-                AND ${timeCondition}
-                AND s.status = 'pending'
-                ORDER BY s.scheduled_at ASC
-            `;
-            params.push(username);
-        }
+        // All users can see reminders they created or are assigned to them
+        sql = `
+            SELECT ${baseFields}
+            FROM scheduler s
+            JOIN customers c ON c.id = s.customer_id
+            LEFT JOIN team_members tm ON tm.username = s.assigned_to
+            WHERE (
+                s.created_by = ? -- reminders they created
+                OR s.assigned_to = ? -- reminders assigned to them
+            )
+            AND ${timeCondition}
+            AND s.status = 'pending'
+            ORDER BY s.scheduled_at ASC
+        `;
+        params.push(userId, username);
 
         const [rows] = await connection.execute(sql, params);
 

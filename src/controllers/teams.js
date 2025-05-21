@@ -4,7 +4,7 @@ import connectDB from '../db/index.js';
 
 // Create a new team
 export const createTeam = async (req, res) => {
-    const { team_name } = req.body;
+    const { team_name, tax_id, reg_no, team_detail, team_address, team_country, team_prompt, team_phone, team_email } = req.body;
     const created_by = req.user.userId; // Get userId from auth middleware
 
     try {
@@ -25,10 +25,13 @@ export const createTeam = async (req, res) => {
                 return res.status(400).json({ error: 'Team name already exists' });
             }
 
-            // Create new team
+            // Create new team with all fields
             const [result] = await conn.query(
-                'INSERT INTO teams (team_name, created_by) VALUES (?, ?)',
-                [team_name, created_by]
+                `INSERT INTO teams (
+                    team_name, tax_id, reg_no, team_detail, 
+                    team_address, team_country, team_prompt, team_phone, team_email, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [team_name, tax_id, reg_no, team_detail, team_address, team_country, team_prompt, team_phone, team_email, created_by]
             );
 
             await conn.commit();
@@ -59,7 +62,7 @@ export const getAllTeams = async (req, res) => {
 
         // Get all teams with creator information
         const [teams] = await connection.query(
-            'SELECT t.*, u.username as created_by_name FROM teams t JOIN users u ON t.created_by = u.id ORDER BY t.created_at DESC'
+            'SELECT t.*, a.username as created_by_name FROM teams t JOIN admin a ON t.created_by = a.id ORDER BY t.created_at DESC'
         );
 
         res.json(teams);

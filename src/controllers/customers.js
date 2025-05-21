@@ -4,60 +4,38 @@ import connectDB from '../db/index.js';
 
 export const searchCustomers = async (req, res) => {
   try {
-    const { query } = req.query;
+    const { query, team } = req.query;
+
+    // If team parameter is present, use searchTeams instead
+    if (team) {
+      return searchTeams(req, res);
+    }
+
     if (!query) {
       return res.status(400).json({ message: 'Search query is required' });
     }
 
     const connection = await connectDB();
-    let sql;
-    let params;
-
-    const userRole = req.user.role || 'user';
     const searchParam = `%${query}%`;
     
-    // Define searchable fields based on new schema
+    // Define searchable fields based on schema
     const searchFields = [
-      'c.first_name', 'c.last_name', 'c.middle_name', 
-      'c.gender', 'c.email_id', 'c.date_of_birth',
-      'c.phone_no_primary', 'c.phone_no_secondary', 'c.whatsapp_num',
-      'c.address', 'c.country', 'c.contact_type','c.company_name',
-      'c.disposition', 'c.other_location',
-      'c.designation', 'c.website', 'c.agent_name','c.source','c.QUEUE_NAME',
-      'c.C_unique_id', 'c.last_updated', 'c.id', 'c.agent_name'
+      'customer_name', 'phone_no_primary', 'phone_no_secondary', 
+      'email_id', 'address', 'country', 'designation',
+      'disposition', 'comment', 'C_unique_id',
+      'agent_name'
     ];
 
     const searchConditions = searchFields.map(field => `${field} LIKE ?`).join(' OR ');
 
-    // Build the base query with role-based access control
-    if (userRole === 'team_leader') {
-      sql = `
-        SELECT DISTINCT c.* 
-        FROM customers c
-        INNER JOIN users u ON c.agent_name = u.username
-        WHERE u.team_id = ? AND (${searchConditions})
-      `;
-      params = [req.user.team_id, ...searchFields.map(() => searchParam)];
-    } else if (userRole === 'user') {
-      sql = `
-        SELECT c.* FROM customers c
-        WHERE c.agent_name = ? AND (${searchConditions})
-      `;
-      params = [req.user.username, ...searchFields.map(() => searchParam)];
-    } else if (['super_admin', 'it_admin', 'business_head'].includes(userRole.toLowerCase())) {
-      // Admins can search all records
-      sql = `
-        SELECT c.* FROM customers c
-        WHERE ${searchConditions}
-      `;
-      params = searchFields.map(() => searchParam);
-    } else {
-      return res.status(403).json({ message: 'Unauthorized role' });
-    }
+    const sql = `
+      SELECT * FROM customers 
+      WHERE ${searchConditions}
+      ORDER BY last_updated DESC 
+      LIMIT 100
+    `;
 
-    // Add ORDER BY and LIMIT
-    sql += ' ORDER BY c.last_updated DESC LIMIT 100';
-
+    const params = searchFields.map(() => searchParam);
     const [results] = await connection.execute(sql, params);
     
     return res.json({
@@ -582,3 +560,51 @@ export const getCustomersByDateRange = async (req, res) => {
 };
 
 // **********
+
+export const searchTeams = async (req, res) => {
+  try {
+    const { team } = req.query;
+    if (!team) {
+      return res.status(400).json({ message: 'Team name is required' });
+    }
+
+    const connection = await connectDB();
+    const searchParam = `%${team}%`;
+    
+    // First get team members
+    const teamMembersQuery = `
+      SELECT DISTINCT u.* 
+      FROM users u
+      JOIN customers c ON c.agent_name = u.username
+      WHERE c.QUEUE_NAME LIKE ?
+      ORDER BY u.username
+    `;
+
+    // Then get team records
+    const teamRecordsQuery = `
+      SELECT * FROM customers 
+      WHERE QUEUE_NAME LIKE ?
+      ORDER BY last_updated DESC 
+      LIMIT 100
+    `;
+
+    const [teamMembers] = await connection.execute(teamMembersQuery, [searchParam]);
+    const [records] = await connection.execute(teamRecordsQuery, [searchParam]);
+    
+    return res.json({
+      success: true,
+      data: {
+        teamMembers,
+        records,
+      },
+      count: {
+        members: teamMembers.length,
+        records: records.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Team search error:', error);
+    res.status(500).json({ message: 'Error searching team', error: error.message });
+  }
+};
