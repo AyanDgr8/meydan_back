@@ -124,6 +124,10 @@ CREATE TABLE `updates_customer` (
         REFERENCES `team_members` (`username`, `team_id`) ON UPDATE CASCADE
 );
 
+-- Drop the foreign key constraint
+ALTER TABLE updates_customer 
+DROP FOREIGN KEY updates_customer_agent_fk;
+
 -- Create scheduler table
 CREATE TABLE `scheduler` (
     `id` int NOT NULL AUTO_INCREMENT,

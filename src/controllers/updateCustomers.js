@@ -195,14 +195,38 @@ export const insertChangeLog = async (connection, customerId, C_unique_id, chang
       throw new Error('Missing required fields for change log');
     }
 
+    // Get the team_id from the customer record
+    const [customerRows] = await connection.execute(
+      'SELECT QUEUE_NAME FROM customers WHERE id = ?',
+      [customerId]
+    );
+
+    if (customerRows.length === 0) {
+      throw new Error('Customer not found');
+    }
+
+    const queueName = customerRows[0].QUEUE_NAME;
+
+    // Get team_id from the teams table
+    const [teamRows] = await connection.execute(
+      'SELECT id FROM teams WHERE team_name = ?',
+      [queueName]
+    );
+
+    if (teamRows.length === 0) {
+      throw new Error('Team not found');
+    }
+
+    const teamId = teamRows[0].id;
+
     // Insert each change as a separate record
     for (const change of changes) {
       const query = `
         INSERT INTO updates_customer (
           customer_id, C_unique_id, field, 
           old_value, new_value, changed_by, 
-          changed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), 'UTC', 'Asia/Kolkata'))
+          changed_at, team_id
+        ) VALUES (?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), 'UTC', 'Asia/Kolkata'), ?)
       `;
 
       const params = [
@@ -211,14 +235,9 @@ export const insertChangeLog = async (connection, customerId, C_unique_id, chang
         change.field || null,
         change.oldValue || null,
         change.newValue || null,
-        username
+        username,
+        teamId
       ];
-
-      console.log('Inserting change log:', {
-        query,
-        params,
-        change
-      });
 
       await connection.execute(query, params);
     }
@@ -342,110 +361,3 @@ export const gethistoryCustomer = async (req, res) => {
     });
   }
 };
-
-
-
-// // Update customer fields by phone number
-// export const updateCustomerFieldsByPhone = async (req, res) => {
-//   let connection;
-//   try {
-//     if (!req.user) {
-//       return res.status(401).json({ message: 'Authentication required' });
-//     }
-
-//     connection = await connectDB();
-//     await connection.beginTransaction();
-
-//     const phoneNumber = req.params.phone_no;
-//     const queryParams = req.query;
-
-//     if (!queryParams || Object.keys(queryParams).length === 0) {
-//       return res.status(400).json({ error: 'No valid updates provided.' });
-//     }
-
-//     // First, get the current customer details with a lock to prevent concurrent updates
-//     const [customerRows] = await connection.execute(
-//       'SELECT * FROM customers WHERE phone_no = ? ORDER BY last_updated DESC, id DESC LIMIT 1 FOR UPDATE',
-//       [phoneNumber]
-//     );
-
-//     if (customerRows.length === 0) {
-//       return res.status(404).json({ error: 'Customer not found.' });
-//     }
-
-//     const customer = customerRows[0];
-//     const customerId = customer.id;
-//     const cUniqueId = customer.C_unique_id;
-
-//     // Check for recent updates to prevent duplicate entries
-//     const [recentUpdates] = await connection.execute(
-//       `SELECT * FROM updates_customer 
-//        WHERE customer_id = ? 
-//        AND changed_at >= DATE_SUB(NOW(), INTERVAL 2 SECOND)`,
-//       [customerId]
-//     );
-
-//     if (recentUpdates.length > 0) {
-//       await connection.rollback();
-//       return res.status(409).json({ 
-//         message: 'An update was just made to this record. Please try again.',
-//         details: 'Duplicate update prevented'
-//       });
-//     }
-
-//     // Process each update
-//     for (const [field, newValue] of Object.entries(queryParams)) {
-//       if (customer.hasOwnProperty(field)) {
-//         // Get the current value, ensuring paid_date is never null
-//         let oldValue = customer[field];
-//         if (field === 'paid_date') {
-//           oldValue = oldValue || defaultLastPaidDate;
-//         }
-
-//         // Check if the value is actually changing
-//         if (oldValue?.toString() === newValue?.toString()) {
-//           continue; // Skip if no actual change
-//         }
-
-//         // Insert into updates_customer table
-//         await connection.execute(
-//           `INSERT INTO updates_customer 
-//           (customer_id, C_unique_id, field, 
-//           old_value, new_value, changed_by, 
-//           changed_at)
-//           VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-//           [customerId, cUniqueId, field, oldValue, newValue, req.user.username]
-//         );
-
-//         // Update the customers table
-//         await connection.execute(
-//           `UPDATE customers SET ${field} = ?, last_updated = NOW() WHERE id = ?`,
-//           [newValue, customerId]
-//         );
-//       }
-//     }
-
-//     await connection.commit();
-
-//     res.status(200).json({ 
-//       message: 'Customer details updated successfully.',
-//       updatedFields: Object.keys(queryParams),
-//       phoneNumber,
-//       C_unique_id: cUniqueId
-//     });
-
-//   } catch (error) {
-//     if (connection) {
-//       await connection.rollback();
-//     }
-//     console.error('Error updating customer details:', error);
-//     res.status(500).json({ 
-//       error: 'Failed to update customer details.',
-//       details: error.message 
-//     });
-//   } finally {
-//     if (connection) {
-//       connection.release();
-//     }
-//   }
-// };

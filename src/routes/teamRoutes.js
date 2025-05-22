@@ -33,6 +33,7 @@ router.get('/:teamName', authenticateToken, async (req, res) => {
     } catch (err) {
         console.error('Error fetching team customers:', err);
         res.status(500).json({ 
+            success: false,
             message: 'Failed to fetch team customers',
             error: err.message 
         });
@@ -45,29 +46,35 @@ router.get('/:teamName', authenticateToken, async (req, res) => {
 
 // Get customer by phone number for a specific team
 router.get('/:teamName/:phone_no', authenticateToken, async (req, res) => {
+
     try {
         const pool = await connectDB();
         const connection = await pool.getConnection();
 
         try {
+            const { teamName, phone_no } = req.params;
+
             const [customers] = await connection.query(
                 `SELECT c.* 
                  FROM customers c
-                 JOIN teams t ON c.team_id = t.id
+                 LEFT JOIN teams t ON c.team_id = t.id
                  WHERE t.team_name = ? AND c.phone_no_primary = ?`,
-                [req.params.teamName, req.params.phone_no]
+                [teamName, phone_no]
             );
 
             if (customers.length === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Customer not found'
+                return res.json({
+                    success: true,
+                    exists: false,
+                    message: 'Customer not found',
+                    redirect: `/customers/create?team=${teamName}`
                 });
             }
 
             res.json({
                 success: true,
-                data: customers[0]
+                exists: true,
+                customer: customers[0]
             });
         } finally {
             connection.release();

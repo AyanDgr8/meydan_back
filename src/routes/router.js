@@ -97,7 +97,7 @@ router.delete('/customers/:id', authenticateToken, deleteCustomer);
 router.post('/customers/delete-multiple', authenticateToken, deleteMultipleCustomers);
 
 // Customer phone number operations
-router.get('/customers/phone/:phone_no', authenticateToken, checkCustomerByPhone);
+router.get('/team/:teamName/:phone_no', authenticateToken, checkCustomerByPhone);
 router.patch('/customers/phone/:phone_no/updates', authenticateToken, updateCustomer);
 router.post('/customers/create/:phone_no', authenticateToken, makeNewRecord);
 
