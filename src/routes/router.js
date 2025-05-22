@@ -14,7 +14,11 @@ import {
 
 import { deleteCustomer, deleteMultipleCustomers } from '../controllers/deleteCustomers.js';
 
-import { makeNewRecord, createCustomer } from '../controllers/createCustomers.js';
+import { 
+    makeNewRecord, 
+    createCustomer, 
+    checkExistingCustomer
+} from '../controllers/createCustomers.js';
 
 import { updateCustomer, historyCustomer, gethistoryCustomer } from '../controllers/updateCustomers.js';
 
@@ -127,5 +131,8 @@ router.post('/records_info', getTeamRecords);
 
 // Route to get schedule records with field mapping
 router.post('/records_schedule', getScheduleRecords);
+
+// Route to check existing customer
+router.get('/customers/check/:phone/:team', checkExistingCustomer);
 
 export default router;

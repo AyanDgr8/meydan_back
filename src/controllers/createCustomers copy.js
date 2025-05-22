@@ -260,142 +260,39 @@ const checkDuplicates = async (connection, phone_no_primary, phone_no_secondary,
 };
 
 // Function to generate next C_unique_id
-const generateNextUniqueId = async (connection, QUEUE_NAME, phone_no_primary, team_id) => {
-    // Get all base IDs (without versions) for this queue and team
-    const [existingIds] = await connection.query(
-        `SELECT C_unique_id 
-         FROM customers 
-         WHERE team_id = ? 
-         AND QUEUE_NAME = ? 
-         AND C_unique_id NOT LIKE '%\\_\\_%'
-         AND C_unique_id REGEXP ?
-         ORDER BY CAST(SUBSTRING_INDEX(C_unique_id, '_', -1) AS UNSIGNED) DESC`,
-        [team_id, QUEUE_NAME, `^${QUEUE_NAME}_[0-9]+$`]
-    );
-
-    // Find the highest number used
-    let maxNumber = 0;
-    for (const record of existingIds) {
-        const match = record.C_unique_id.match(new RegExp(`^${QUEUE_NAME}_([0-9]+)$`));
-        if (match) {
-            const num = parseInt(match[1]);
-            if (num > maxNumber) maxNumber = num;
-        }
-    }
-
-    // Generate new base ID with next number
-    const nextNumber = maxNumber + 1;
-    return `${QUEUE_NAME}_${nextNumber}`;
-};
-
-// Function to get the latest record
-const getLatestRecord = async (connection, phone_no_primary, QUEUE_NAME) => {
-    const [records] = await connection.query(
-        `SELECT * FROM customers 
-         WHERE phone_no_primary = ? AND QUEUE_NAME = ?
-         ORDER BY id DESC LIMIT 1`,
-        [phone_no_primary, QUEUE_NAME]
-    );
-    return records[0];
-};
-
-export const checkExistingCustomer = async (req, res) => {
-    let connection;
-    try {
-        connection = await connectDB();
-        const phone = req.params.phone;
-        const team = req.params.team;
-
-        // Get the latest version for this phone number within the same team
-        const [existingCustomer] = await connection.query(
-            `WITH LatestVersions AS (
-                SELECT 
-                    c.*,
-                    CASE 
-                        WHEN C_unique_id REGEXP '__[0-9]+$' 
-                        THEN CAST(SUBSTRING_INDEX(C_unique_id, '__', -1) AS UNSIGNED)
-                        ELSE 0 
-                    END as version_num,
-                    SUBSTRING_INDEX(C_unique_id, '__', 1) as base_id
-                FROM customers c
-                WHERE phone_no_primary = ?
-                AND QUEUE_NAME = ?
-            )
-            SELECT * FROM LatestVersions 
-            ORDER BY 
-                base_id,
-                version_num DESC,
-                id DESC 
-            LIMIT 1`,
-            [phone, team]
+const generateNextUniqueId = async (connection, QUEUE_NAME, existingId = null) => {
+    if (existingId) {
+        // For duplicates, append __1, __2, etc.
+        const parts = existingId.split('__');
+        const basePart = parts[0];
+        
+        // Get the highest suffix for this base ID
+        const [maxSuffixResult] = await connection.query(
+            'SELECT C_unique_id FROM customers WHERE C_unique_id LIKE ? ORDER BY C_unique_id DESC LIMIT 1',
+            [`${basePart}\_\_%`]
         );
 
-        if (existingCustomer.length > 0) {
-            const latestRecord = existingCustomer[0];
-            const existingId = latestRecord.C_unique_id;
-            const baseUniqueId = existingId.includes('__') ? existingId.split('__')[0] : existingId;
-            
-            // Get all versions for this base ID in this team
-            const [versions] = await connection.query(
-                `SELECT 
-                    C_unique_id,
-                    CASE 
-                        WHEN C_unique_id REGEXP '__[0-9]+$' 
-                        THEN CAST(SUBSTRING_INDEX(C_unique_id, '__', -1) AS UNSIGNED)
-                        ELSE 0 
-                    END as version_num
-                FROM customers 
-                WHERE QUEUE_NAME = ?
-                AND (
-                    C_unique_id = ? 
-                    OR C_unique_id REGEXP ?
-                )
-                ORDER BY version_num DESC
-                LIMIT 1`,
-                [team, baseUniqueId, `^${baseUniqueId}__[0-9]+$`]
-            );
-
-            let nextVersion = 1;
-            const latestVersionId = versions[0]?.C_unique_id || baseUniqueId;
-            if (versions.length > 0) {
-                const currentId = versions[0].C_unique_id;
-                if (currentId.includes('__')) {
-                    const currentVersion = parseInt(currentId.split('__')[1]);
-                    if (!isNaN(currentVersion)) {
-                        nextVersion = currentVersion + 1;
-                    }
-                }
-            }
-
-            return res.json({
-                exists: true,
-                latestVersion: latestVersionId,
-                suggestedId: `${baseUniqueId}__${nextVersion}`,
-                message: `Customer exists with version ${latestVersionId}.`,
-                existingCustomer: {
-                    customer_name: latestRecord.customer_name,
-                    phone_no_primary: latestRecord.phone_no_primary,
-                    phone_no_secondary: latestRecord.phone_no_secondary,
-                    email_id: latestRecord.email_id,
-                    address: latestRecord.address,
-                    country: latestRecord.country,
-                    designation: latestRecord.designation,
-                    disposition: latestRecord.disposition,
-                    comment: latestRecord.comment,
-                    QUEUE_NAME: latestRecord.QUEUE_NAME
-                }
-            });
+        if (maxSuffixResult.length === 0) {
+            return `${basePart}__1`;
         }
 
-        res.json({
-            exists: false
-        });
-    } catch (error) {
-        console.error('Error checking customer:', error);
-        res.status(500).json({
-            error: 'Failed to check customer'
-        });
+        const currentSuffix = parseInt(maxSuffixResult[0].C_unique_id.split('__').pop()) || 0;
+        return `${basePart}__${currentSuffix + 1}`;
     }
+
+    // For new records, get the latest number for this QUEUE_NAME
+    const [lastIdResult] = await connection.query(
+        'SELECT C_unique_id FROM customers WHERE QUEUE_NAME = ? AND C_unique_id NOT LIKE "%\_\_%" ORDER BY id DESC LIMIT 1',
+        [QUEUE_NAME]
+    );
+
+    if (lastIdResult.length === 0) {
+        return `${QUEUE_NAME}_1`;
+    }
+
+    const lastId = lastIdResult[0].C_unique_id;
+    const baseNumber = parseInt(lastId.split('_')[1]) || 0;
+    return `${QUEUE_NAME}_${baseNumber + 1}`;
 };
 
 export const createCustomer = async (req, res) => {
@@ -434,83 +331,38 @@ export const createCustomer = async (req, res) => {
 
         const team_id = teamResult[0].id;
 
-        // Initialize C_unique_id variable
-        let C_unique_id;
+        // Format scheduled_at or set to NULL if empty
+        const formattedScheduledAt = scheduled_at && scheduled_at.trim() !== '' 
+            ? new Date(scheduled_at).toISOString().slice(0, 19).replace('T', ' ')
+            : null;
 
-        // Check if customer already exists in this queue to handle versioning
-        const [existingCustomer] = await connection.query(
-            `WITH LatestVersions AS (
-                SELECT 
-                    c.*,
-                    CASE 
-                        WHEN C_unique_id REGEXP '__[0-9]+$' 
-                        THEN CAST(SUBSTRING_INDEX(C_unique_id, '__', -1) AS UNSIGNED)
-                        ELSE 0 
-                    END as version_num,
-                    SUBSTRING_INDEX(C_unique_id, '__', 1) as base_id
-                FROM customers c
-                WHERE QUEUE_NAME = ? 
-                AND phone_no_primary = ?
-                AND team_id = ?
-            )
-            SELECT * FROM LatestVersions 
-            ORDER BY 
-                base_id,
-                version_num DESC,
-                id DESC 
-            LIMIT 1`,
-            [QUEUE_NAME, phone_no_primary, team_id]
+        // Check for duplicates
+        const duplicates = await checkDuplicates(
+            connection, 
+            phone_no_primary, 
+            phone_no_secondary, 
+            email_id,
+            QUEUE_NAME
         );
 
-        if (existingCustomer.length > 0) {
-            const latestRecord = existingCustomer[0];
-            console.log('Found latest record:', latestRecord);
+        // First try to get the next sequential ID
+        let C_unique_id = `${QUEUE_NAME}_1`;
+        let retryCount = 0;
+        const maxRetries = 10;
 
-            // Get base ID from the latest record
-            const existingId = latestRecord.C_unique_id;
-            const baseUniqueId = existingId.includes('__') ? existingId.split('__')[0] : existingId;
-            
-            // Get all versions for this base ID
-            const [versions] = await connection.query(
-                `SELECT 
-                    C_unique_id,
-                    CASE 
-                        WHEN C_unique_id REGEXP '__[0-9]+$' 
-                        THEN CAST(SUBSTRING_INDEX(C_unique_id, '__', -1) AS UNSIGNED)
-                        ELSE 0 
-                    END as version_num
-                FROM customers 
-                WHERE team_id = ? 
-                AND (
-                    C_unique_id = ? 
-                    OR C_unique_id REGEXP ?
-                )
-                ORDER BY version_num DESC
-                LIMIT 1`,
-                [team_id, baseUniqueId, `^${baseUniqueId}__[0-9]+$`]
-            );
+        while (retryCount < maxRetries) {
+            try {
+                // Get the latest ID for this team
+                const [lastIdResult] = await connection.query(
+                    'SELECT C_unique_id FROM customers WHERE QUEUE_NAME = ? AND team_id = ? ORDER BY id DESC LIMIT 1',
+                    [QUEUE_NAME, team_id]
+                );
 
-            let nextVersion = 1;
-            const latestVersionId = versions[0]?.C_unique_id || baseUniqueId;
-            if (versions.length > 0) {
-                const currentId = versions[0].C_unique_id;
-                if (currentId.includes('__')) {
-                    const currentVersion = parseInt(currentId.split('__')[1]);
-                    if (!isNaN(currentVersion)) {
-                        nextVersion = currentVersion + 1;
-                    }
+                if (lastIdResult.length > 0) {
+                    const lastId = lastIdResult[0].C_unique_id;
+                    const baseNumber = parseInt(lastId.split('_')[1]) || 0;
+                    C_unique_id = `${QUEUE_NAME}_${baseNumber + 1}`;
                 }
-            }
-
-            C_unique_id = `${baseUniqueId}__${nextVersion}`;
-            console.log(`Latest version found: ${latestVersionId}, creating new version: ${C_unique_id}`);
-
-            // If this is a POST request, create the new version
-            if (req.method === 'POST') {
-                // Continue with customer creation using the new C_unique_id
-                const formattedScheduledAt = scheduled_at && scheduled_at.trim() !== '' 
-                    ? new Date(scheduled_at).toISOString().slice(0, 19).replace('T', ' ')
-                    : null;
 
                 // Try to insert with this ID
                 const [result] = await connection.query(
@@ -551,94 +403,26 @@ export const createCustomer = async (req, res) => {
 
                 await connection.commit();
 
-                // Get the newly created record
-                const [newRecord] = await connection.query(
-                    `SELECT * FROM customers WHERE id = ?`,
-                    [result.insertId]
-                );
-
-                return res.json({
+                res.json({
                     success: true,
-                    message: 'New version created successfully',
+                    message: 'Customer created successfully',
                     customerId: result.insertId,
-                    C_unique_id,
-                    customer: newRecord[0]
+                    C_unique_id
                 });
-            }
+                return;
 
-            // If this is not a POST request, just return the version info
-            return res.status(400).json({
-                success: false,
-                message: `Customer exists with version ${latestVersionId}.`,
-                existingCustomer: latestRecord,
-                baseId: baseUniqueId,
-                currentVersion: latestVersionId,
-                nextVersion: nextVersion,
-                suggestedId: C_unique_id
-            });
-        } else {
-            // New customer, generate new base ID
-            C_unique_id = await generateNextUniqueId(connection, QUEUE_NAME, phone_no_primary, team_id);
-            console.log('Generated new base ID:', C_unique_id);
+            } catch (err) {
+                if (err.code === 'ER_DUP_ENTRY' && err.sqlMessage.includes('unique_team_customer_id')) {
+                    // If we got a duplicate, try the next number
+                    retryCount++;
+                    await connection.rollback();
+                    continue;
+                }
+                throw err;
+            }
         }
 
-        // Format scheduled_at or set to NULL if empty
-        const formattedScheduledAt = scheduled_at && scheduled_at.trim() !== '' 
-            ? new Date(scheduled_at).toISOString().slice(0, 19).replace('T', ' ')
-            : null;
-
-        // Try to insert with this ID
-        const [result] = await connection.query(
-            `INSERT INTO customers (
-                customer_name, 
-                phone_no_primary, 
-                phone_no_secondary,
-                email_id, 
-                address,
-                country, 
-                designation,
-                disposition, 
-                QUEUE_NAME, 
-                team_id,
-                agent_name, 
-                C_unique_id, 
-                comment, 
-                scheduled_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                customer_name,
-                phone_no_primary,
-                phone_no_secondary || null,
-                email_id || null,
-                address || null,
-                country || null,
-                designation || null,
-                disposition || 'interested',
-                QUEUE_NAME,
-                team_id,
-                isAdmin ? null : req.user.username,
-                C_unique_id,
-                comment || null,
-                formattedScheduledAt
-            ]
-        );
-
-        await connection.commit();
-
-        // Get the newly created record
-        const [newRecord] = await connection.query(
-            `SELECT * FROM customers WHERE id = ?`,
-            [result.insertId]
-        );
-
-        res.json({
-            success: true,
-            message: 'Customer created successfully',
-            customerId: result.insertId,
-            C_unique_id,
-            customer: newRecord[0]
-        });
+        throw new Error('Failed to generate unique ID after maximum retries');
 
     } catch (error) {
         if (connection) {
