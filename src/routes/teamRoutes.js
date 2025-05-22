@@ -43,6 +43,44 @@ router.get('/:teamName', authenticateToken, async (req, res) => {
     }
 });
 
+// Get customer by phone number for a specific team
+router.get('/:teamName/:phone_no', authenticateToken, async (req, res) => {
+    try {
+        const pool = await connectDB();
+        const connection = await pool.getConnection();
+
+        try {
+            const [customers] = await connection.query(
+                `SELECT c.* 
+                 FROM customers c
+                 JOIN teams t ON c.team_id = t.id
+                 WHERE t.team_name = ? AND c.phone_no_primary = ?`,
+                [req.params.teamName, req.params.phone_no]
+            );
+
+            if (customers.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Customer not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: customers[0]
+            });
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error('Error fetching customer:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+});
+
 // User management routes
 router.post('/players/users', authenticateToken, createUser);
 router.get('/players/users', authenticateToken, getAllUsers);
