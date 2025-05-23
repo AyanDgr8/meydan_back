@@ -73,10 +73,10 @@ export const loginAdmin = async (req, res) => {
                 });
             }
 
-            // Deactivate any existing active sessions for this admin on this device
+            // Deactivate ALL existing active sessions for this admin
             await connection.query(
-                'UPDATE login_history SET is_active = false, logout_time = CURRENT_TIMESTAMP WHERE entity_id = ? AND device_id = ? AND is_active = true',
-                [admin.id, deviceId]
+                'UPDATE login_history SET is_active = false, logout_time = CURRENT_TIMESTAMP WHERE entity_id = ? AND is_active = true',
+                [admin.id]
             );
 
             // Create new login session

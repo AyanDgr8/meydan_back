@@ -1,4 +1,5 @@
 // src/middleware/sessionMiddleware.js
+
 import connectDB from '../db/index.js';
 import jwt from 'jsonwebtoken';
 import { logger } from '../logger.js';
@@ -33,7 +34,7 @@ export const validateSession = async (req, res, next) => {
             try {
                 await connection.beginTransaction();
 
-                // First, clean up old sessions
+                // First, clean up old sessions and enforce single-device policy
                 await connection.execute(
                     'UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = ? AND is_active = true AND (TIMESTAMPDIFF(HOUR, login_time, NOW()) >= 24 OR device_id != ?)',
                     [decoded.userId, deviceId]
