@@ -38,6 +38,14 @@ import { downloadCustomerData, getQueueNames } from '../controllers/downloadFile
 import { authenticateToken } from '../middlewares/auth.js';
 import { checkCustomerByPhone } from '../controllers/newnum.js';
 
+import { sendNewCustomerEmail } from '../controllers/sendEmail.js';
+import { 
+    sendNewCustomerWhatsApp,
+    initWhatsApp,
+    getStatus,
+    resetWhatsApp
+} from '../controllers/sendWhatsapp.js';
+
 import { validateSession } from '../middlewares/sessionMiddleware.js';
 
 import { createUser, getAllUsers, getTeamMembers } from '../controllers/users.js';
@@ -133,6 +141,16 @@ router.post('/records_info', getTeamRecords);
 router.post('/records_schedule', getScheduleRecords);
 
 // Route to check existing customer
-router.get('/customers/check/:phone/:team', checkExistingCustomer);
+router.get('/customers/check/:phone/:team', checkExistingCustomer)
+;
+
+// Email routes
+router.post('/send-customer-email', authenticateToken, sendNewCustomerEmail);
+
+// WhatsApp routes
+router.get('/whatsapp/init', authenticateToken, initWhatsApp);
+router.get('/whatsapp/status', authenticateToken, getStatus);
+router.post('/whatsapp/reset', authenticateToken, resetWhatsApp);
+router.post('/whatsapp/send', authenticateToken, sendNewCustomerWhatsApp);
 
 export default router;

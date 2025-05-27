@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS teams (
     reg_no VARCHAR(50) DEFAULT NULL,
     team_detail TEXT DEFAULT NULL,
     team_address text DEFAULT NULL,
-    team_country varchar(15) DEFAULT NULL,
+    team_country varchar(50) DEFAULT NULL,
     team_prompt VARCHAR(500) DEFAULT NULL
     team_phone VARCHAR(15) DEFAULT NULL,
     team_email VARCHAR(100) DEFAULT NULL,

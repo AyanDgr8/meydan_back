@@ -422,11 +422,14 @@ export const createCustomer = async (req, res) => {
         );
         const isAdmin = adminResult.length > 0;
 
-        // Get team_id based on QUEUE_NAME
+        console.log('Attempting to find team with name:', QUEUE_NAME);
+        // Convert spaces to underscores to match database format
+        const formattedQueueName = QUEUE_NAME.replace(/\s+/g, '_');
         const [teamResult] = await connection.query(
             'SELECT id FROM teams WHERE team_name = ?',
-            [QUEUE_NAME]
+            [formattedQueueName]
         );
+        console.log('Team search result:', teamResult);
 
         if (!teamResult || teamResult.length === 0) {
             throw new Error('Invalid team name');
