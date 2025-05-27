@@ -1,92 +1,284 @@
 // src/controllers/sendWhatsapp.js
-
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import { makeWASocket, DisconnectReason, useMultiFileAuthState } from '@whiskeysockets/baileys';
 import connectDB from '../db/index.js';
-import axios from 'axios';
-import dotenv from 'dotenv';
-import { logger } from '../logger.js';
+import qrcode from 'qrcode';
 
-dotenv.config();
+// Store active instances
+export const instances = {};
 
-const WHATSAPP_API_URL = 'http://localhost:8448';
-const DEVICE_ID = 'f7cc71ef-852d-454c-8edb-c017c39e23b5';
+// Error codes
+const ERROR_CODES = {
+    WHATSAPP_NOT_CONNECTED: 'WHATSAPP_NOT_CONNECTED',
+    WHATSAPP_CONNECTING: 'WHATSAPP_CONNECTING',
+    SOCKET_NOT_AUTHENTICATED: 'SOCKET_NOT_AUTHENTICATED',
+    INSTANCE_NOT_FOUND: 'INSTANCE_NOT_FOUND',
+    WHATSAPP_NOT_READY: 'WHATSAPP_NOT_READY'
+};
 
-/**
- * Send WhatsApp notification when a new customer is added
- * @param {Object} customerData - Customer information
- * @param {string} teamPhone - Team phone number to send notification to
- * @returns {Promise} - Resolves when message is sent
- */
-export const sendCustomerNotification = async (customerData, teamPhone) => {
-    const {
-        customer_name,
-        phone_no_primary,
-        phone_no_secondary,
-        email_id,
-        address,
-        country,
-        designation,
-        QUEUE_NAME,
-        disposition,
-        comment,
-        C_unique_id
-    } = customerData;
-
-    // Format the message content
-    const messageContent = `*New Customer Query - ${customer_name || 'N/A'}*
-
-Dear ${QUEUE_NAME || 'Team'},
-    We've received a query from a new customer that requires your attention. Below are the details collected:
-
-Customer Information:
-    *Name* : ${customer_name || 'N/A'}
-    *Phone* : ${phone_no_primary || 'N/A'}
-    *Alt Phone* : ${phone_no_secondary || 'N/A'}
-    *Email* : ${email_id || 'N/A'}
-    *Address* : ${address || 'N/A'}
-    *Country* : ${country || 'N/A'}
-    *Designation* : ${designation || 'N/A'}
-    *Disposition* : ${disposition || 'N/A'}
-    *Unique ID* : ${C_unique_id || 'N/A'}
-    *Message* : ${comment || 'N/A'}
-
-Please take appropriate action based on the customer's requirements
-Best regards,
-CRM System`;
-
+// Initialize WhatsApp socket
+const initializeSock = async (instanceId) => {
     try {
-        // First, login to get the auth token
-        const loginResponse = await axios.post(`${WHATSAPP_API_URL}/login`, {
-            email: process.env.WHATSAPP_EMAIL || 'ayan@multycomm.com',
-            password: process.env.WHATSAPP_PASSWORD || 'Ayan1012'
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'x-device-id': DEVICE_ID
-            }
+        // Initialize auth state
+        const userDir = path.join(process.cwd(), 'users');
+        const authFolder = path.join(userDir, `instance_${instanceId}`);
+
+        if (!fs.existsSync(userDir)) fs.mkdirSync(userDir);
+        if (!fs.existsSync(authFolder)) fs.mkdirSync(authFolder);
+
+        const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+
+        // Create socket with proper configuration
+        const sock = makeWASocket({
+            auth: state,
+            printQRInTerminal: false,
+            browser: ["Chrome (Linux)", "", ""],
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            keepAliveIntervalMs: 15000
         });
 
-        const authToken = loginResponse.data.token;
+        // Create a promise that resolves when QR code is generated or connection is established
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Connection timeout'));
+            }, 60000); // 1 minute timeout
 
-        // Send the WhatsApp message
-        await axios.post(`${WHATSAPP_API_URL}/AyanDGR8/send-message`, {
-            messages: [{
-                number: teamPhone,
-                text: messageContent
-            }]
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${authToken}`
-            }
+            let hasResolved = false;
+            let reconnectAttempts = 0;
+            const maxReconnectAttempts = 3;
+
+            // Handle connection updates
+            sock.ev.on('connection.update', async (update) => {
+                const { connection, qr, lastDisconnect } = update;
+
+                if (qr && !hasResolved) {
+                    try {
+                        const url = await qrcode.toDataURL(qr);
+                        instances[instanceId] = {
+                            sock,
+                            qrCode: url,
+                            status: 'disconnected',
+                            lastUpdate: new Date()
+                        };
+                        
+                        if (!hasResolved) {
+                            resolve({ qrCode: url });
+                            hasResolved = true;
+                        }
+                    } catch (err) {
+                        reject(err);
+                    }
+                }
+
+                if (connection === 'open') {
+                    clearTimeout(timeout);
+                    instances[instanceId] = {
+                        sock,
+                        status: 'connected',
+                        lastUpdate: new Date()
+                    };
+                    await saveCreds();
+                    
+                    if (!hasResolved) {
+                        resolve({ connected: true });
+                        hasResolved = true;
+                    }
+                }
+
+                if (connection === 'close') {
+                    const statusCode = lastDisconnect?.error?.output?.statusCode;
+                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                    
+                    if (shouldReconnect && reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        instances[instanceId] = {
+                            ...instances[instanceId],
+                            status: 'reconnecting',
+                            lastUpdate: new Date()
+                        };
+                        
+                        const delay = Math.min(Math.pow(2, reconnectAttempts) * 1000, 5000);
+                        setTimeout(async () => {
+                            try {
+                                await saveCreds();
+                                delete instances[instanceId];
+                                await initializeSock(instanceId);
+                            } catch (error) {
+                                if (!hasResolved) {
+                                    reject(error);
+                                }
+                            }
+                        }, delay);
+                    } else {
+                        instances[instanceId] = {
+                            ...instances[instanceId],
+                            status: 'disconnected',
+                            lastUpdate: new Date()
+                        };
+                        if (!hasResolved) {
+                            reject(new Error(ERROR_CODES.WHATSAPP_NOT_CONNECTED));
+                        }
+                    }
+                }
+            });
+
+            // Save credentials whenever updated
+            sock.ev.on('creds.update', saveCreds);
         });
-
-        logger.info(`WhatsApp notification sent successfully for customer: ${customer_name}`);
     } catch (error) {
-        logger.error('Error sending WhatsApp notification:', error);
         throw error;
     }
 };
 
+// Initialize WhatsApp connection
+export const initWhatsApp = async (req, res) => {
+    let dbConnection;
+    try {
+        // Get first name from username for instance ID
+        const fullName = req.user.username;
+        const instanceId = fullName.split(' ')[0]; // Get first name only
+
+        const pool = await connectDB();
+        dbConnection = await pool.getConnection();
+
+        // Check if instance exists
+        const [rows] = await dbConnection.execute(
+            'SELECT * FROM instances WHERE instance_id = ?',
+            [instanceId]
+        );
+
+        if (rows.length === 0) {
+            // Create new instance record
+            await dbConnection.execute(
+                'INSERT INTO instances (instance_id, status, register_id) VALUES (?, ?, ?)',
+                [instanceId, 'initializing', req.user.email]
+            );
+        }
+
+        // Update instance status
+        await dbConnection.execute(
+            'UPDATE instances SET status = ? WHERE instance_id = ?',
+            ['initializing', instanceId]
+        );
+
+        // Initialize socket
+        const result = await initializeSock(instanceId);
+
+        res.json({
+            success: true,
+            message: 'WhatsApp initialized successfully',
+            qrCode: result.qrCode,
+            connected: result.connected,
+            status: instances[instanceId]?.status || 'initializing',
+            instanceId
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Failed to initialize WhatsApp',
+            error: error.message
+        });
+    } finally {
+        if (dbConnection) {
+            dbConnection.release();
+        }
+    }
+};
+
+// Get connection status
+export const getStatus = async (req, res) => {
+    const fullName = req.user.username;
+    const instanceId = fullName.split(' ')[0];
+    const instance = instances[instanceId];
+
+    // If we have an instance and it's in connecting state, keep showing QR
+    const status = instance?.status || 'disconnected';
+    const shouldShowQr = status === 'disconnected' || status === 'connecting';
+
+    res.json({
+        success: true,
+        status: status,
+        qrCode: shouldShowQr ? instance?.qrCode : null
+    });
+};
+
+// Reset WhatsApp connection
+export const resetWhatsApp = async (req, res) => {
+    let dbConnection;
+    const fullName = req.user.username;
+    const instanceId = fullName.split(' ')[0];
+
+    try {
+        const pool = await connectDB();
+        dbConnection = await pool.getConnection();
+
+        // Update instance status to resetting
+        await dbConnection.execute(
+            'UPDATE instances SET status = ? WHERE instance_id = ?',
+            ['resetting', instanceId]
+        );
+
+        // Get the current instance
+        const instance = instances[instanceId];
+        if (instance && instance.sock) {
+            try {
+                await instance.sock.logout();
+                await instance.sock.end();
+            } catch (err) {
+                console.warn('Error while closing socket:', err);
+            }
+            delete instances[instanceId];
+        }
+
+        // Delete auth files
+        const authFolder = path.join(process.cwd(), 'users', `instance_${instanceId}`);
+        if (fs.existsSync(authFolder)) {
+            fs.rmSync(authFolder, { recursive: true, force: true });
+        }
+
+        // Update database status
+        await dbConnection.execute(
+            'UPDATE instances SET status = ? WHERE instance_id = ?',
+            ['disconnected', instanceId]
+        );
+
+        // Initialize new connection
+        const result = await initializeSock(instanceId);
+
+        res.json({
+            success: true,
+            message: 'WhatsApp connection reset successfully',
+            ...result
+        });
+
+    } catch (error) {
+        if (dbConnection) {
+            try {
+                await dbConnection.execute(
+                    'UPDATE instances SET status = ? WHERE instance_id = ?',
+                    ['error', instanceId]
+                );
+            } catch (dbError) {
+                console.error('Error updating instance status:', dbError);
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Failed to reset WhatsApp connection',
+            error: error.message
+        });
+    } finally {
+        if (dbConnection) {
+            dbConnection.release();
+        }
+    }
+};
 // Send new customer WhatsApp notification
 export const sendNewCustomerWhatsApp = async (req, res) => {
     let connection;

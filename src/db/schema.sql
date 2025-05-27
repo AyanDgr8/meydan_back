@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS teams (
     team_detail TEXT DEFAULT NULL,
     team_address text DEFAULT NULL,
     team_country varchar(50) DEFAULT NULL,
-    team_prompt VARCHAR(500) DEFAULT NULL
+    team_prompt VARCHAR(500) DEFAULT NULL,
     team_phone VARCHAR(15) DEFAULT NULL,
     team_email VARCHAR(100) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -92,6 +92,34 @@ CREATE TABLE IF NOT EXISTS customer_field_values (
     UNIQUE KEY unique_field_value (field_name, field_value)
 );
 
+-- Create instances table
+CREATE TABLE IF NOT EXISTS instances (
+    id INT AUTO_INCREMENT,
+    instance_id VARCHAR(255) NOT NULL,
+    register_id VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'disconnected',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY unique_instance_id (instance_id),
+    FOREIGN KEY (register_id) REFERENCES admin(email) ON DELETE CASCADE,
+    UNIQUE KEY unique_register_id (register_id)
+);
+
+-- Create trigger to automatically generate instance_id from admin's name
+DELIMITER //
+CREATE TRIGGER before_instance_insert 
+BEFORE INSERT ON instances
+FOR EACH ROW
+BEGIN
+    DECLARE first_name VARCHAR(255);
+    SELECT SUBSTRING_INDEX(name, ' ', 1) INTO first_name
+    FROM admin 
+    WHERE email = NEW.register_id;
+    
+    SET NEW.instance_id = first_name;
+END//
+DELIMITER ;
 
 -- Insert default values for disposition
 INSERT INTO customer_field_values (field_name, field_value) VALUES 
@@ -127,6 +155,72 @@ CREATE TABLE `updates_customer` (
 -- Drop the foreign key constraint
 ALTER TABLE updates_customer 
 DROP FOREIGN KEY updates_customer_agent_fk;
+
+-- ********************
+-- ********************
+
+-- Create business_center table
+CREATE TABLE IF NOT EXISTS business_center (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    business_name VARCHAR(100) NOT NULL,
+    business_phone VARCHAR(15),
+    business_whatsapp VARCHAR(15),
+    business_email VARCHAR(100),
+    business_password VARCHAR(30),
+    business_address TEXT,
+    business_country VARCHAR(50),
+    business_tax_id VARCHAR(50),
+    business_reg_no VARCHAR(50),
+    other_detail TEXT,
+    unique_id VARCHAR(50) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+
+
+DELIMITER $$
+
+CREATE TRIGGER before_insert_business
+BEFORE INSERT ON business_center
+FOR EACH ROW
+BEGIN
+    DECLARE base_name VARCHAR(100);
+    DECLARE counter INT DEFAULT 1;
+    DECLARE temp_id VARCHAR(50);
+    DECLARE last_char CHAR(1);
+    
+    -- Get the first word of business name and clean it
+    SET base_name = SUBSTRING_INDEX(REGEXP_REPLACE(NEW.business_name, '[^a-zA-Z0-9 ]', '', 'g'), ' ', 1);
+    
+    -- Initial unique_id attempt
+    SET temp_id = CONCAT(base_name, '_', counter);
+    
+    -- Keep trying until we find a unique ID
+    WHILE EXISTS (SELECT 1 FROM business_center WHERE unique_id = temp_id) DO
+        -- If base attempt exists, add last character of first word and increment counter
+        SET last_char = RIGHT(base_name, 1);
+        SET temp_id = CONCAT(base_name, last_char, '_', counter);
+        SET counter = counter + 1;
+    END WHILE;
+    
+    -- Set the unique_id
+    SET NEW.unique_id = temp_id;
+END$$
+
+DELIMITER ;
+
+-- Trigger to update updated_at timestamp
+CREATE TRIGGER update_business_modtime
+BEFORE UPDATE ON business_center
+FOR EACH ROW
+SET NEW.updated_at = CURRENT_TIMESTAMP;
+
+
+-- ********************
+-- ********************
+
+
 
 -- Create scheduler table
 CREATE TABLE `scheduler` (
@@ -223,3 +317,4 @@ BEGIN
 END//
 
 DELIMITER ;
+

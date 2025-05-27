@@ -40,15 +40,29 @@ import { checkCustomerByPhone } from '../controllers/newnum.js';
 
 import { sendNewCustomerEmail } from '../controllers/sendEmail.js';
 import { 
-    sendNewCustomerWhatsApp,
-    initWhatsApp,
-    getStatus,
-    resetWhatsApp
+    sendNewCustomerWhatsApp, sendCustomerNotification
 } from '../controllers/sendWhatsapp.js';
+
+// import { 
+//   generateQRCode, 
+//   getConnectionStatus, 
+//   resetInstance, 
+//   saveInstanceToDB, 
+//   getUserInstances, 
+//   updateInstance 
+// } from '../controllers/whatsapp.js';
 
 import { validateSession } from '../middlewares/sessionMiddleware.js';
 
 import { createUser, getAllUsers, getTeamMembers } from '../controllers/users.js';
+
+import { 
+    createBusiness,
+    getAllBusinesses,
+    getBusinessById,
+    updateBusiness,
+    deleteBusiness
+} from '../controllers/businessCenter.js';
 
 const router = express.Router();
 
@@ -148,9 +162,25 @@ router.get('/customers/check/:phone/:team', checkExistingCustomer)
 router.post('/send-customer-email', authenticateToken, sendNewCustomerEmail);
 
 // WhatsApp routes
-router.get('/whatsapp/init', authenticateToken, initWhatsApp);
-router.get('/whatsapp/status', authenticateToken, getStatus);
-router.post('/whatsapp/reset', authenticateToken, resetWhatsApp);
-router.post('/whatsapp/send', authenticateToken, sendNewCustomerWhatsApp);
+router.post('/send-whatsapp', authenticateToken, sendNewCustomerWhatsApp);
+
+// router.get('/whatsapp/init', authenticateToken, initWhatsApp);
+// router.get('/whatsapp/status', authenticateToken, getStatus);
+// router.post('/whatsapp/reset', authenticateToken, resetWhatsApp);
+// router.get('/whatsapp/init/:instanceId', authenticateToken, validateSession, generateQRCode);
+// router.get('/whatsapp/status/:instanceId', authenticateToken, validateSession, getConnectionStatus);
+// router.post('/whatsapp/reset/:instanceId', authenticateToken, validateSession, resetInstance);
+
+// // Instance management routes
+// router.post('/instances', authenticateToken, validateSession, saveInstanceToDB);
+// router.get('/instances/:register_id', authenticateToken, validateSession, getUserInstances);
+// router.put('/instances/:instance_id', authenticateToken, validateSession, updateInstance);
+
+// Business center routes
+router.post('/business', authenticateToken, createBusiness);
+router.get('/business', authenticateToken, getAllBusinesses);
+router.get('/business/:id', authenticateToken, getBusinessById);
+router.put('/business/:id', authenticateToken, updateBusiness);
+router.delete('/business/:id', authenticateToken, deleteBusiness);
 
 export default router;
