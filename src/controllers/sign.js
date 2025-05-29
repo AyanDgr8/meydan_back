@@ -20,6 +20,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const SALT_ROUNDS = 10;
+const JWT_EXPIRATION = '10h'; // Match database session duration
 
 // Login User
 export const loginAdmin = async (req, res) => {
@@ -34,99 +35,139 @@ export const loginAdmin = async (req, res) => {
     }
 
     let connection;
-    try {
-        const pool = await connectDB();
-        connection = await pool.getConnection();
-
-        await connection.beginTransaction();
-
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
         try {
-            // Get admin by email
-            const [admins] = await connection.query(
-                'SELECT * FROM admin WHERE email = ?',
-                [email]
-            );
+            const pool = await connectDB();
+            connection = await pool.getConnection();
 
-            if (admins.length === 0) {
-                await connection.rollback();
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid credentials'
-                });
-            }
+            await connection.beginTransaction();
 
-            const admin = admins[0];
-
-            // Validate password
-            const isValidPassword = await bcrypt.compare(password, admin.password);
-            if (!isValidPassword) {
-                // Record failed login attempt
-                await connection.query(
-                    'INSERT INTO login_history (entity_type, entity_id, device_id, is_active) VALUES (?, ?, ?, false)',
-                    ['admin', admin.id, deviceId]
+            try {
+                // First try to find user in the users table
+                const [users] = await connection.query(
+                    `SELECT u.*, r.role_name 
+                     FROM users u 
+                     JOIN roles r ON u.role_id = r.id 
+                     WHERE u.email = ? 
+                     FOR UPDATE NOWAIT`,
+                    [email]
                 );
-                
-                await connection.commit();
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid credentials'
-                });
-            }
 
-            // Deactivate ALL existing active sessions for this admin
-            await connection.query(
-                'UPDATE login_history SET is_active = false, logout_time = CURRENT_TIMESTAMP WHERE entity_id = ? AND is_active = true',
-                [admin.id]
-            );
+                // If not found in users table, try admin table
+                const [admins] = await connection.query(
+                    'SELECT id, email, password, username, "admin" as role_name FROM admin WHERE email = ? FOR UPDATE NOWAIT',
+                    [email]
+                );
 
-            // Create new login session
-            const [loginResult] = await connection.query(
-                'INSERT INTO login_history (entity_type, entity_id, device_id, is_active) VALUES (?, ?, ?, true)',
-                ['admin', admin.id, deviceId]
-            );
+                // Combine results
+                const user = users[0] || admins[0];
 
-            // Generate JWT token
-            const token = jwt.sign(
-                {
-                    userId: admin.id,
-                    email: admin.email,
-                    username: admin.username,
-                    isAdmin: true,
-                    deviceId,
-                    sessionId: loginResult.insertId
-                },
-                process.env.JWT_SECRET,
-                { expiresIn: '10h' }
-            );
-
-            await connection.commit();
-
-            res.status(200).json({
-                success: true,
-                message: 'Login successful',
-                data: {
-                    id: admin.id,
-                    username: admin.username,
-                    email: admin.email,
-                    token
+                if (!user) {
+                    await connection.rollback();
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Invalid credentials'
+                    });
                 }
-            });
+
+                // Validate password
+                const isValidPassword = await bcrypt.compare(password, user.password);
+                if (!isValidPassword) {
+                    // Record failed login attempt
+                    await connection.query(
+                        'INSERT INTO login_history (entity_type, entity_id, device_id, is_active) VALUES (?, ?, ?, false)',
+                        [user.role_name, user.id, deviceId]
+                    );
+                    
+                    await connection.commit();
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Invalid credentials'
+                    });
+                }
+
+                // Clean up old sessions (older than 24 hours)
+                await connection.query(
+                    'UPDATE login_history SET is_active = false, logout_time = CURRENT_TIMESTAMP WHERE entity_id = ? AND entity_type = ? AND is_active = true AND last_activity < DATE_SUB(NOW(), INTERVAL 24 HOUR)',
+                    [user.id, user.role_name]
+                );
+
+                // Deactivate ALL existing active sessions for this user
+                await connection.query(
+                    'UPDATE login_history SET is_active = false, logout_time = CURRENT_TIMESTAMP WHERE entity_id = ? AND entity_type = ? AND is_active = true',
+                    [user.id, user.role_name]
+                );
+
+                // Create new login session
+                const [loginResult] = await connection.query(
+                    'INSERT INTO login_history (entity_type, entity_id, device_id, is_active) VALUES (?, ?, ?, true)',
+                    [user.role_name, user.id, deviceId]
+                );
+
+                // Generate JWT token with extended expiration
+                const token = jwt.sign(
+                    {
+                        userId: user.id,
+                        email: user.email,
+                        username: user.username,
+                        role: user.role_name,
+                        isAdmin: user.role_name === 'admin', // This will be true only for admin table users
+                        deviceId,
+                        sessionId: loginResult.insertId,
+                        brand_id: user.brand_id || null,
+                        business_center_id: user.business_center_id || null
+                    },
+                    process.env.JWT_SECRET,
+                    { expiresIn: JWT_EXPIRATION }
+                );
+
+                await connection.commit();
+
+                res.status(200).json({
+                    success: true,
+                    message: 'Login successful',
+                    data: {
+                        id: user.id,
+                        username: user.username,
+                        email: user.email,
+                        role: user.role_name,
+                        brand_id: user.brand_id || null,
+                        business_center_id: user.business_center_id || null,
+                        token
+                    }
+                });
+
+                // Successfully processed, break out of retry loop
+                break;
+
+            } catch (error) {
+                await connection.rollback();
+                throw error;
+            }
 
         } catch (error) {
-            await connection.rollback();
-            throw error;
-        }
+            // Check if error is a deadlock
+            if (error.code === 'ER_LOCK_DEADLOCK' && retryCount < maxRetries - 1) {
+                retryCount++;
+                // Exponential backoff: wait 1s, 2s, 4s
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount - 1) * 1000));
+                continue;
+            }
 
-    } catch (error) {
-        logger.error('Admin login error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error during login',
-            error: error.message
-        });
-    } finally {
-        if (connection) {
-            connection.release();
+            logger.error('Login error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error during login',
+                error: error.message
+            });
+            break;
+        } finally {
+            if (connection) {
+                connection.release();
+            }
         }
     }
 };
@@ -241,7 +282,7 @@ export const fetchCurrentAdmin = async (req, res) => {
     }
 };
 
-// Forgot Password for Admin
+// Forgot Password for Users
 export const forgotPassword = async (req, res) => {
     const { email } = req.body;
 
@@ -257,39 +298,54 @@ export const forgotPassword = async (req, res) => {
         const pool = await connectDB();
         connection = await pool.getConnection();
 
-        // Check if admin exists
-        const [admins] = await connection.query(
-            'SELECT id, email, username FROM admin WHERE email = ?',
+        // First check users table
+        const [users] = await connection.query(
+            `SELECT u.id, u.email, u.username, r.role_name 
+             FROM users u 
+             JOIN roles r ON u.role_id = r.id 
+             WHERE u.email = ?`,
             [email]
         );
 
-        if (admins.length === 0) {
+        // If not found in users, check admin table
+        const [admins] = await connection.query(
+            'SELECT id, email, username, "admin" as role_name FROM admin WHERE email = ?',
+            [email]
+        );
+
+        const user = users[0] || admins[0];
+
+        if (!user) {
             return res.status(404).json({
                 success: false,
-                message: 'Admin not found'
+                message: 'Email address not found'
             });
         }
 
-        const admin = admins[0];
-        
-        // Generate a temporary token (this won't be stored in DB)
-        const tempToken = crypto.createHash('sha256')
-            .update(user.id + user.email + Date.now().toString())
-            .digest('hex');
+        // Generate a JWT token for password reset
+        const resetToken = jwt.sign(
+            {
+                userId: user.id,
+                email: user.email,
+                role: user.role_name,
+                isAdmin: user.role_name === 'admin'
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' }
+        );
 
-
-        // Create reset URL
-        const resetUrl = `${process.env.FRONTEND_URL}`;
+        // Create reset URL with token
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
         // Send email
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: email,
-            subject: 'Admin Password Reset Request',
+            subject: 'Password Reset Request',
             html: `
                 <h1>Password Reset Request</h1>
-                <p>Hello ${admin.username},</p>
-                <p>You requested a password reset for your admin account. Click the link below to reset your password:</p>
+                <p>Hello ${user.username},</p>
+                <p>You requested a password reset for your account. Click the link below to reset your password:</p>
                 <a href="${resetUrl}" style="
                     background-color: #EF6F53;
                     color: white;
@@ -326,7 +382,7 @@ export const forgotPassword = async (req, res) => {
     }
 };
 
-// Send OTP (Reset Password Link) for Admin
+// Send OTP (Reset Password Link)
 export const sendOTP = async (req, res) => {
     const { email } = req.body;
 
@@ -342,63 +398,78 @@ export const sendOTP = async (req, res) => {
         const pool = await connectDB();
         connection = await pool.getConnection();
         
-        // Check if the admin exists
-        const [admins] = await connection.query(
-            'SELECT * FROM admin WHERE email = ?',
+        // First check users table
+        const [users] = await connection.query(
+            `SELECT u.id, u.email, u.username, r.role_name 
+             FROM users u 
+             JOIN roles r ON u.role_id = r.id 
+             WHERE u.email = ?`,
             [email]
         );
+
+        // If not found in users, check admin table
+        const [admins] = await connection.query(
+            'SELECT id, email, username, "admin" as role_name FROM admin WHERE email = ?',
+            [email]
+        );
+
+        const user = users[0] || admins[0];
         
-        if (admins.length === 0) {
+        if (!user) {
             return res.status(400).json({
                 success: false,
-                message: 'The email address is not associated with an admin account'
+                message: 'Email address not found'
             });
         }
 
-        const admin = admins[0];
-
-        // Generate token with admin ID
-        const token = jwt.sign(
-            { id: admin.id },
+        // Generate a JWT token for password reset
+        const resetToken = jwt.sign(
+            {
+                userId: user.id,
+                email: user.email,
+                role: user.role_name,
+                isAdmin: user.role_name === 'admin'
+            },
             process.env.JWT_SECRET,
-            { expiresIn: "1h" }
+            { expiresIn: '1h' }
         );
 
-        const resetLink = `${process.env.FRONTEND_URL}/admin/reset-password/${token}`;
+        // Create reset URL with token
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
-        // Mail options
+        // Email content
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: email,
-            subject: 'Admin Password Reset Request',
+            subject: 'Password Reset Request',
             html: `
-                <h2>Password Reset Request</h2>
-                <p>Dear ${admin.username},</p>
-                <p>We received a request to reset your admin password. Here are your account details:</p>
+                <h1>Password Reset Request</h1>
+                <p>Hello ${user.username},</p>
+                <p>We received a request to reset your password. Here are your account details:</p>
                 <ul>
-                    <li>Username: ${admin.username}</li>
+                    <li>Username: ${user.username}</li>
                     <li>Email: ${email}</li>
                 </ul>
                 <p>Click the link below to reset your password:</p>
-                <a href="${resetLink}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">Reset Password</a>
+                <a href="${resetLink}" style="display: inline-block; padding: 10px 20px; background-color: #EF6F53; color: white; text-decoration: none; border-radius: 5px;">Reset Password</a>
                 <p>If you didn't request this password reset, please ignore this email or contact support.</p>
                 <p>Best regards,<br>Multycomm Team</p>
             `
         };
 
-        // Send mail using Promise
+        // Send email
         await transporter.sendMail(mailOptions);
 
-        return res.status(200).json({
+        res.status(200).json({
             success: true,
             message: 'Password reset link has been sent to your email'
         });
 
     } catch (error) {
-        logger.error('Error sending reset link:', error);
+        logger.error('Error sending OTP:', error);
         res.status(500).json({
             success: false,
-            message: 'Server error',
+            message: 'Failed to send password reset link',
             error: error.message
         });
     } finally {
@@ -502,26 +573,73 @@ export const resetPassword = async (req, res) => {
             }
 
             try {
-                const connection = await connectDB();
+                const pool = await connectDB();
+                const connection = await pool.getConnection();
                 
-                // Hash the new password
-                const hashedPassword = await bcrypt.hash(newPassword, 10);
-                
-                // Update password using the email from the token
-                await connection.query(
-                    'UPDATE admin SET password = ? WHERE email = ?',
-                    [hashedPassword, decoded.email]
-                );
+                try {
+                    // Hash the new password
+                    const hashedPassword = await bcrypt.hash(newPassword, 10);
+                    
+                    // Begin transaction
+                    await connection.beginTransaction();
 
-                res.status(200).json({ message: 'Password reset successful' });
+                    if (decoded.isAdmin) {
+                        // Update admin password
+                        const [result] = await connection.query(
+                            'UPDATE admin SET password = ? WHERE id = ? AND email = ?',
+                            [hashedPassword, decoded.userId, decoded.email]
+                        );
+                        if (result.affectedRows === 0) {
+                            throw new Error('Admin not found');
+                        }
+                    } else {
+                        // Update user password
+                        const [result] = await connection.query(
+                            'UPDATE users SET password = ? WHERE id = ? AND email = ?',
+                            [hashedPassword, decoded.userId, decoded.email]
+                        );
+                        if (result.affectedRows === 0) {
+                            throw new Error('User not found');
+                        }
+                    }
+
+                    // Commit transaction
+                    await connection.commit();
+
+                    // Clear any active sessions for this user
+                    await connection.query(
+                        'UPDATE login_history SET is_active = false, logout_time = CURRENT_TIMESTAMP WHERE entity_id = ? AND entity_type = ? AND is_active = true',
+                        [decoded.userId, decoded.role]
+                    );
+
+                    res.status(200).json({ 
+                        success: true,
+                        message: 'Password reset successful' 
+                    });
+
+                } catch (error) {
+                    await connection.rollback();
+                    throw error;
+                } finally {
+                    connection.release();
+                }
+
             } catch (error) {
                 logger.error('Error updating password:', error);
-                res.status(500).json({ message: 'Failed to update password' });
+                res.status(500).json({ 
+                    success: false,
+                    message: 'Failed to update password',
+                    error: error.message 
+                });
             }
         });
     } catch (error) {
         logger.error('Error resetting password:', error);
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ 
+            success: false,
+            message: 'Server error',
+            error: error.message 
+        });
     }
 };
 
@@ -547,7 +665,7 @@ export const checkSession = async (req, res) => {
         // Update last_activity and check if session is still active
         const [result] = await connection.query(
             'UPDATE login_history SET last_activity = CURRENT_TIMESTAMP WHERE entity_id = ? AND device_id = ? AND entity_type = ? AND is_active = 1',
-            [decoded.userId, deviceId, 'admin']
+            [decoded.userId, deviceId, decoded.role]
         );
 
         // Check if session was found and updated

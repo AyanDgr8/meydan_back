@@ -61,8 +61,29 @@ import {
     getAllBusinesses,
     getBusinessById,
     updateBusiness,
-    deleteBusiness
-} from '../controllers/businessCenter.js';
+    deleteBusiness,
+    createBusinessTeams, 
+    getBusinessTeams, 
+    createBusinessAssociate // Import the new controller function
+} from '../controllers/roles/businessCenter.js';
+
+import { 
+    createBrand,
+    getAllBrands,
+    getBrandById,
+    updateBrand,
+    deleteBrand,
+    getBrandBusinessCenters,
+    getBrandHierarchy
+} from '../controllers/roles/brandCenter.js';
+
+import { 
+  createReceptionist,
+  getAllReceptionists,
+  getReceptionistById,
+  updateReceptionist,
+  deleteReceptionist
+} from '../controllers/roles/receptionist.js';
 
 const router = express.Router();
 
@@ -182,5 +203,24 @@ router.get('/business', authenticateToken, getAllBusinesses);
 router.get('/business/:id', authenticateToken, getBusinessById);
 router.put('/business/:id', authenticateToken, updateBusiness);
 router.delete('/business/:id', authenticateToken, deleteBusiness);
+router.post('/business/:id/teams', authenticateToken, createBusinessTeams);
+router.get('/business/:id/teams', authenticateToken, getBusinessTeams);
+router.post('/business/:id/associate', authenticateToken, createBusinessAssociate);
+
+// Brand routes
+router.post('/brand', authenticateToken, createBrand);
+router.get('/brand', authenticateToken, getAllBrands);
+router.get('/brand/:id', authenticateToken, getBrandById);
+router.put('/brand/:id', authenticateToken, updateBrand);
+router.delete('/brand/:id', authenticateToken, deleteBrand);
+router.get('/brand/:brandId/business-centers', authenticateToken, getBrandBusinessCenters);
+router.get('/brand/:brandId/hierarchy', authenticateToken, getBrandHierarchy);
+
+// Receptionist routes
+router.post('/receptionist', authenticateToken, createReceptionist);
+router.get('/receptionist', authenticateToken, getAllReceptionists);
+router.get('/receptionist/:id', authenticateToken, getReceptionistById);
+router.put('/receptionist/:id', authenticateToken, updateReceptionist);
+router.delete('/receptionist/:id', authenticateToken, deleteReceptionist);
 
 export default router;

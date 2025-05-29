@@ -9,10 +9,47 @@ CREATE TABLE IF NOT EXISTS admin (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Brand table (must be created first due to foreign key references)
+CREATE TABLE IF NOT EXISTS brand (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    brand_name VARCHAR(100) NOT NULL,
+    brand_phone VARCHAR(15),
+    brand_email VARCHAR(100) UNIQUE,
+    brand_password VARCHAR(100),
+    companies INT,
+    associates INT,
+    receptionist INT,
+    brand_tax_id VARCHAR(50),
+    brand_reg_no VARCHAR(50),
+    brand_other_detail TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Create business_center table
+CREATE TABLE IF NOT EXISTS business_center (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    business_name VARCHAR(100) NOT NULL,
+    business_phone VARCHAR(15),
+    business_whatsapp VARCHAR(15),
+    business_email VARCHAR(100),
+    business_password VARCHAR(255),
+    business_address TEXT,
+    business_country VARCHAR(50),
+    business_tax_id VARCHAR(50),
+    business_reg_no VARCHAR(50),
+    other_detail TEXT,
+    brand_id INT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE
+);
+
 -- Create teams
 CREATE TABLE IF NOT EXISTS teams (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    team_name VARCHAR(50) NOT NULL UNIQUE,
+    team_name VARCHAR(50) NOT NULL,
     tax_id VARCHAR(50) DEFAULT NULL,
     reg_no VARCHAR(50) DEFAULT NULL,
     team_detail TEXT DEFAULT NULL,
@@ -21,9 +58,13 @@ CREATE TABLE IF NOT EXISTS teams (
     team_prompt VARCHAR(500) DEFAULT NULL,
     team_phone VARCHAR(15) DEFAULT NULL,
     team_email VARCHAR(100) DEFAULT NULL,
+    team_type ENUM('company', 'department') NOT NULL DEFAULT 'company',
+    business_center_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_by INT NOT NULL,
-    FOREIGN KEY (created_by) REFERENCES admin(id)
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_team_business (team_name, business_center_id)
 );
 
 -- Create team_members (users)
@@ -45,7 +86,7 @@ CREATE TABLE IF NOT EXISTS team_members (
 -- Create login_history table
 CREATE TABLE `login_history` (
     `id` int NOT NULL AUTO_INCREMENT,
-    `entity_type` ENUM('admin', 'team_member') NOT NULL,
+    `entity_type` ENUM('admin', 'brand_user', 'receptionist') NOT NULL,
     `entity_id` int NOT NULL,
     `device_id` varchar(255) NOT NULL,
     `is_active` tinyint(1) DEFAULT '1',
@@ -53,9 +94,7 @@ CREATE TABLE `login_history` (
     `logout_time` timestamp NULL DEFAULT NULL,
     `last_activity` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    KEY `entity_type_id` (`entity_type`, `entity_id`),
-    CONSTRAINT `login_history_admin_fk` FOREIGN KEY (`entity_id`) 
-        REFERENCES `admin` (`id`) ON DELETE CASCADE
+    KEY `entity_type_id` (`entity_type`, `entity_id`)
 );
 
 -- Create customers
@@ -156,72 +195,7 @@ CREATE TABLE `updates_customer` (
 ALTER TABLE updates_customer 
 DROP FOREIGN KEY updates_customer_agent_fk;
 
--- ********************
--- ********************
-
--- Create business_center table
-CREATE TABLE IF NOT EXISTS business_center (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    business_name VARCHAR(100) NOT NULL,
-    business_phone VARCHAR(15),
-    business_whatsapp VARCHAR(15),
-    business_email VARCHAR(100),
-    business_password VARCHAR(30),
-    business_address TEXT,
-    business_country VARCHAR(50),
-    business_tax_id VARCHAR(50),
-    business_reg_no VARCHAR(50),
-    other_detail TEXT,
-    unique_id VARCHAR(50) UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
-
-
-DELIMITER $$
-
-CREATE TRIGGER before_insert_business
-BEFORE INSERT ON business_center
-FOR EACH ROW
-BEGIN
-    DECLARE base_name VARCHAR(100);
-    DECLARE counter INT DEFAULT 1;
-    DECLARE temp_id VARCHAR(50);
-    DECLARE last_char CHAR(1);
-    
-    -- Get the first word of business name and clean it
-    SET base_name = SUBSTRING_INDEX(REGEXP_REPLACE(NEW.business_name, '[^a-zA-Z0-9 ]', '', 'g'), ' ', 1);
-    
-    -- Initial unique_id attempt
-    SET temp_id = CONCAT(base_name, '_', counter);
-    
-    -- Keep trying until we find a unique ID
-    WHILE EXISTS (SELECT 1 FROM business_center WHERE unique_id = temp_id) DO
-        -- If base attempt exists, add last character of first word and increment counter
-        SET last_char = RIGHT(base_name, 1);
-        SET temp_id = CONCAT(base_name, last_char, '_', counter);
-        SET counter = counter + 1;
-    END WHILE;
-    
-    -- Set the unique_id
-    SET NEW.unique_id = temp_id;
-END$$
-
-DELIMITER ;
-
--- Trigger to update updated_at timestamp
-CREATE TRIGGER update_business_modtime
-BEFORE UPDATE ON business_center
-FOR EACH ROW
-SET NEW.updated_at = CURRENT_TIMESTAMP;
-
-
--- ********************
--- ********************
-
-
-
+-- ******************
 -- Create scheduler table
 CREATE TABLE `scheduler` (
     `id` int NOT NULL AUTO_INCREMENT,
@@ -318,3 +292,202 @@ END//
 
 DELIMITER ;
 
+-- ********************
+-- ********************
+-- ********************
+-- 27th ,may 2025
+-- ********************
+-- ********************
+-- ********************
+
+
+
+-- Create receptionist table
+CREATE TABLE IF NOT EXISTS receptionist (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    receptionist_name VARCHAR(100) NOT NULL,
+    receptionist_phone VARCHAR(15),
+    receptionist_email VARCHAR(100),
+    rec_other_detail TEXT,
+    business_center_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE
+);
+
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS before_receptionist_insert$$
+
+CREATE TRIGGER before_receptionist_insert
+BEFORE INSERT ON receptionist
+FOR EACH ROW
+BEGIN
+    DECLARE counter INT DEFAULT 1;
+    DECLARE temp_id VARCHAR(50);
+    DECLARE base_name VARCHAR(45);
+    
+    SET base_name = 'REC';
+    SET temp_id = CONCAT(base_name, counter);
+    
+    WHILE EXISTS (SELECT 1 FROM receptionist WHERE rec_unique_id = temp_id) DO
+        SET counter = counter + 1;
+        SET temp_id = CONCAT(base_name, counter);
+    END WHILE;
+    
+    SET NEW.rec_unique_id = temp_id;
+END$$
+
+DROP TRIGGER IF EXISTS update_receptionist_modtime$$
+
+CREATE TRIGGER update_receptionist_modtime
+BEFORE UPDATE ON receptionist
+FOR EACH ROW
+BEGIN
+    SET NEW.updated_at = CURRENT_TIMESTAMP;
+END$$
+
+DELIMITER ;
+
+-- Create trigger to handle user creation from receptionist
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS after_receptionist_insert$$
+
+CREATE TRIGGER after_receptionist_insert
+AFTER INSERT ON receptionist
+FOR EACH ROW
+BEGIN
+    -- Create user account for receptionist
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        business_center_id
+    )
+    SELECT 
+        NEW.receptionist_name,
+        NEW.receptionist_email,
+        '12345678', -- Default password
+        r.id,
+        NEW.business_center_id
+    FROM roles r
+    WHERE r.role_name = 'receptionist';
+END$$
+
+DELIMITER ;
+
+-- ***************
+-- ***************
+-- ***************
+-- ***************
+-- ***************
+
+
+-- Create roles table
+CREATE TABLE IF NOT EXISTS roles (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    role_name ENUM('admin', 'brand_user', 'receptionist') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_role_name (role_name)
+);
+
+-- Insert default roles
+INSERT INTO roles (role_name) VALUES 
+    ('admin'),
+    ('brand_user'),
+    ('receptionist');
+
+-- Create users table
+CREATE TABLE IF NOT EXISTS users (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    role_id INT NOT NULL,
+    brand_id INT DEFAULT NULL,
+    business_center_id INT DEFAULT NULL,
+    is_active BOOLEAN DEFAULT true,
+    last_login TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (role_id) REFERENCES roles(id),
+    FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE SET NULL,
+    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE SET NULL
+);
+
+-- Create trigger to handle user creation from brand
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS after_brand_insert$$
+
+CREATE TRIGGER after_brand_insert
+AFTER INSERT ON brand
+FOR EACH ROW
+BEGIN
+    -- Create user account for brand user with hashed password
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        brand_id
+    )
+    SELECT 
+        NEW.brand_name,
+        NEW.brand_email,
+        NEW.brand_password, -- Password will be hashed in the controller
+        r.id,
+        NEW.id
+    FROM roles r
+    WHERE r.role_name = 'brand_user';
+END$$
+
+DELIMITER ;
+
+-- Create trigger to handle user creation from receptionist
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS after_receptionist_insert$$
+
+CREATE TRIGGER after_receptionist_insert
+AFTER INSERT ON receptionist
+FOR EACH ROW
+BEGIN
+    -- Create user account for receptionist
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        business_center_id
+    )
+    SELECT 
+        NEW.receptionist_name,
+        NEW.receptionist_email,
+        '12345678', -- Default password
+        r.id,
+        NEW.business_center_id
+    FROM roles r
+    WHERE r.role_name = 'receptionist';
+END$$
+
+DELIMITER ;
+
+
+-- Table List
+-- 1 admin
+-- 2 brand
+-- 3 business_center
+-- 4 customer_field_values
+-- 5 customers
+-- 6 instances
+-- 7 login_history
+-- 8 receptionist
+-- 9 roles
+-- 10 scheduler
+-- 11 team_members
+-- 12 teams
+-- 13 updates_customer
+-- 14 users

@@ -1,7 +1,7 @@
-// src/controllers/Admin.js
+// src/controllers/roles/Admin.js
 
 import bcrypt from 'bcrypt';
-import connectDB from '../db/index.js';
+import connectDB from '../../db/index.js';  
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -32,17 +32,51 @@ const createAdmin = async () => {
                 [email, username]
             );
 
+            let adminId;
+
             if (existingAdmin.length > 0) {
                 console.log('Admin already exists. Updating password...');
                 await connection.query(
                     'UPDATE admin SET password = ? WHERE email = ?',
                     [hashedPassword, email]
                 );
+                adminId = existingAdmin[0].id;
             } else {
                 // Create new admin
-                await connection.query(
+                const [result] = await connection.query(
                     'INSERT INTO admin (username, email, password) VALUES (?, ?, ?)',
                     [username, email, hashedPassword]
+                );
+                adminId = result.insertId;
+            }
+
+            // Get admin role id
+            const [roles] = await connection.query(
+                'SELECT id FROM roles WHERE role_name = ?',
+                ['admin']
+            );
+
+            if (roles.length === 0) {
+                throw new Error('Admin role not found in roles table');
+            }
+
+            // Check if user record exists
+            const [existingUser] = await connection.query(
+                'SELECT id FROM users WHERE email = ?',
+                [email]
+            );
+
+            if (existingUser.length > 0) {
+                // Update existing user
+                await connection.query(
+                    'UPDATE users SET password = ?, username = ? WHERE email = ?',
+                    [hashedPassword, username, email]
+                );
+            } else {
+                // Create corresponding user record
+                await connection.query(
+                    'INSERT INTO users (username, email, password, role_id) VALUES (?, ?, ?, ?)',
+                    [username, email, hashedPassword, roles[0].id]
                 );
             }
 
