@@ -31,7 +31,7 @@ import {
 } from '../controllers/sign.js';
 
 import { getReminders, getAllReminders, getScheduleRecords } from '../controllers/schedule.js';
-import { getAllTeams, getTeamsByBusinessId } from '../controllers/teams.js';
+import { getAllTeams, getTeamsByBusinessId, getTeamByName } from '../controllers/teams.js';
 
 // import { uploadCustomerData, confirmUpload } from '../controllers/uploadFile.js';
 import { downloadCustomerData, getQueueNames } from '../controllers/downloadFile.js';
@@ -199,6 +199,15 @@ router.post('/send-whatsapp', authenticateToken, sendNewCustomerWhatsApp);
 // router.get('/instances/:register_id', authenticateToken, validateSession, getUserInstances);
 // router.put('/instances/:instance_id', authenticateToken, validateSession, updateInstance);
 
+// Brand routes
+router.post('/brand', authenticateToken, createBrand);
+router.get('/brand', authenticateToken, getAllBrands);
+router.get('/brand/:id', authenticateToken, getBrandById);
+router.put('/brand/:id', authenticateToken, updateBrand);
+router.delete('/brand/:id', authenticateToken, deleteBrand);
+router.get('/brand/:brandId/business-centers', authenticateToken, getBrandBusinessCenters);
+router.get('/brand/:brandId/hierarchy', authenticateToken, getBrandHierarchy);
+
 // Business center routes
 router.post('/business', authenticateToken, createBusiness);
 router.get('/business', authenticateToken, getAllBusinesses);
@@ -208,15 +217,6 @@ router.delete('/business/:id', authenticateToken, deleteBusiness);
 router.post('/business/:id/teams', authenticateToken, createBusinessTeams);
 router.get('/business/:id/teams', authenticateToken, getBusinessTeams);
 router.post('/business/:id/associate', authenticateToken, createBusinessAssociate);
-
-// Brand routes
-router.post('/brand', authenticateToken, createBrand);
-router.get('/brand', authenticateToken, getAllBrands);
-router.get('/brand/:id', authenticateToken, getBrandById);
-router.put('/brand/:id', authenticateToken, updateBrand);
-router.delete('/brand/:id', authenticateToken, deleteBrand);
-router.get('/brand/:brandId/business-centers', authenticateToken, getBrandBusinessCenters);
-router.get('/brand/:brandId/hierarchy', authenticateToken, getBrandHierarchy);
 
 // Receptionist routes
 router.post('/receptionist', authenticateToken, createReceptionist);

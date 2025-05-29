@@ -1,7 +1,7 @@
 // src/routes/teamRoutes.js
 
 import express from 'express';
-import { createTeam, getAllTeams } from '../controllers/teams.js';
+import { createTeam, getAllTeams, getTeamByName } from '../controllers/teams.js';
 import { createUser, getAllUsers } from '../controllers/users.js';
 import { authenticateToken } from '../middlewares/auth.js';
 import connectDB from '../db/index.js';
@@ -11,6 +11,9 @@ const router = express.Router();
 // Team routes
 router.post('/players/teams', authenticateToken, createTeam);
 router.get('/players/teams', authenticateToken, getAllTeams);
+
+// Get team by name (new route)
+router.get('/business/:teamName', authenticateToken, getTeamByName);
 
 // New endpoint for fetching team-specific customer records
 router.get('/:teamName', authenticateToken, async (req, res) => {

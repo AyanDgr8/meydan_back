@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS teams (
     FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE,
     UNIQUE KEY unique_team_business (team_name, business_center_id)
 );
+ALTER TABLE teams
+    MODIFY COLUMN business_center_id INT NULL,
+    ADD COLUMN brand_id INT after business_center_id,
+    ADD FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE,
+    ADD UNIQUE KEY unique_team_brand (team_name, brand_id);
 
 -- Create team_members (users)
 CREATE TABLE IF NOT EXISTS team_members (

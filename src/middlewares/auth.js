@@ -36,12 +36,18 @@ export const authenticateToken = async (req, res, next) => {
         const pool = await connectDB();
         const connection = await pool.getConnection();
         try {
+            // Store full decoded token
+            req.decodedToken = decoded;
 
+            // Set essential user info including role and brand_id
             req.user = {
                 userId: userId,
                 username: decoded.username,
                 email: decoded.email,
-                // team_id: decoded.team_id ? parseInt(decoded.team_id) : null
+                role: decoded.role,
+                brand_id: decoded.brand_id,
+                business_center_id: decoded.business_center_id,
+                isAdmin: decoded.isAdmin || false
             };
 
             console.log('Set request user:', req.user);

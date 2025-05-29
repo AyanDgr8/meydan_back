@@ -74,8 +74,12 @@ export const getAllBusinesses = async (req, res) => {
         const pool = connectDB();
         conn = await pool.getConnection();
 
+        // Get brand_id from authenticated user
+        const brand_id = req.user.brand_id;
+
         const [businesses] = await conn.query(
-            'SELECT * FROM business_center ORDER BY created_at DESC'
+            'SELECT * FROM business_center WHERE brand_id = ? ORDER BY created_at DESC',
+            [brand_id]
         );
 
         res.json(businesses);
