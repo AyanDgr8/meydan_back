@@ -106,6 +106,7 @@ CREATE TABLE `customers` (
     `email_id` varchar(100) DEFAULT NULL,
     `address` text DEFAULT NULL,
     `country` varchar(15) DEFAULT NULL,
+    `designation` varchar(50) DEFAULT NULL,
     `disposition` varchar(50) DEFAULT 'interested',
     `QUEUE_NAME` varchar(50) DEFAULT NULL,
     `comment` text DEFAULT NULL,

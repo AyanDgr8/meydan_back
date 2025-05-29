@@ -31,7 +31,7 @@ import {
 } from '../controllers/sign.js';
 
 import { getReminders, getAllReminders, getScheduleRecords } from '../controllers/schedule.js';
-import { getAllTeams } from '../controllers/teams.js';
+import { getAllTeams, getTeamsByBusinessId } from '../controllers/teams.js';
 
 // import { uploadCustomerData, confirmUpload } from '../controllers/uploadFile.js';
 import { downloadCustomerData, getQueueNames } from '../controllers/downloadFile.js';
@@ -117,6 +117,8 @@ router.post('/users/create', authenticateToken, createUser);
 router.get('/users/all', authenticateToken, getAllUsers);
 router.get('/players/users', authenticateToken, getAllUsers);
 router.get('/players/teams', authenticateToken, getAllTeams);
+router.get('/business/:businessId/teams', authenticateToken, getTeamsByBusinessId);
+router.get('/business/:businessId/team/:teamId/members', authenticateToken, getTeamMembers);
 router.get('/users/team/:teamId', authenticateToken, getTeamMembers);
 
 // User routes

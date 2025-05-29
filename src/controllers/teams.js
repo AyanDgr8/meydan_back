@@ -39,8 +39,12 @@ export const createTeam = async (req, res) => {
 
             await conn.commit();
             res.status(201).json({
-                message: 'Team created successfully',
-                team_id: result.insertId
+                teams: [
+                    {
+                        message: 'Team created successfully',
+                        team_id: result.insertId
+                    }
+                ]
             });
 
         } catch (error) {
@@ -74,7 +78,57 @@ export const getAllTeams = async (req, res) => {
             team_name: team.team_name.replace(/_/g, ' ')
         }));
 
-        res.json(formattedTeams);
+        res.json({ teams: formattedTeams });
+
+    } catch (error) {
+        console.error('Error fetching teams:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+};
+
+// Get teams by business ID
+export const getTeamsByBusinessId = async (req, res) => {
+    const pool = connectDB();
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        const businessId = req.params.businessId;
+        
+        console.log('Fetching teams for business ID:', businessId);
+
+        // First, let's check if any teams exist without joins
+        const [rawTeams] = await connection.query(
+            'SELECT * FROM teams WHERE business_center_id = ?',
+            [businessId]
+        );
+        console.log('Raw teams found:', rawTeams);
+
+        // Then do the full query with joins
+        const [teams] = await connection.query(
+            `SELECT t.*, a.username as created_by_name 
+             FROM teams t 
+             LEFT JOIN admin a ON t.created_by = a.id 
+             WHERE t.business_center_id = ?
+             ORDER BY t.created_at DESC`,
+            [businessId]
+        );
+
+        console.log('Teams after join:', teams);
+
+        // Convert underscores back to spaces in team names
+        const formattedTeams = teams.map(team => ({
+            ...team,
+            team_name: team.team_name.replace(/_/g, ' ')
+        }));
+
+        console.log('Formatted teams:', formattedTeams);
+        console.log('User from token:', req.user);
+
+        res.json({ teams: formattedTeams });
 
     } catch (error) {
         console.error('Error fetching teams:', error);

@@ -530,14 +530,14 @@ export const createBusinessAssociate = async (req, res) => {
                 throw new Error('Invalid team ID for this business center');
             }
 
-            // Check for existing user with same username or email
+            // Check for existing user with same username or email only within the same team
             const [existingUser] = await conn.query(
-                'SELECT id FROM team_members WHERE username = ? OR email = ? OR mobile_num = ?',
-                [username, email, mobile_num]
+                'SELECT id FROM team_members WHERE (username = ? OR email = ? OR mobile_num = ?) AND team_id = ?',
+                [username, email, mobile_num, team_id]
             );
 
             if (existingUser.length > 0) {
-                throw new Error('Username, email, or mobile number already exists');
+                throw new Error('Username, email, or mobile number already exists in this team');
             }
 
             // Create the team member

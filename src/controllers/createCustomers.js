@@ -415,27 +415,31 @@ export const createCustomer = async (req, res) => {
             QUEUE_NAME, comment, scheduled_at 
         } = req.body;
 
-        // Check if user is an admin
-        const [adminResult] = await connection.query(
-            'SELECT id FROM admin WHERE id = ?',
-            [req.user.userId]
-        );
-        const isAdmin = adminResult.length > 0;
-
         console.log('Attempting to find team with name:', QUEUE_NAME);
-        // Convert spaces to underscores to match database format
-        const formattedQueueName = QUEUE_NAME.replace(/\s+/g, '_');
+        // Keep spaces in team name to match database format
         const [teamResult] = await connection.query(
             'SELECT id FROM teams WHERE team_name = ?',
-            [formattedQueueName]
+            [QUEUE_NAME]
         );
         console.log('Team search result:', teamResult);
 
         if (!teamResult || teamResult.length === 0) {
-            throw new Error('Invalid team name');
+            throw new Error(`Team '${QUEUE_NAME}' not found`);
         }
 
         const team_id = teamResult[0].id;
+
+        // Check if the user is a member of this team
+        const [teamMember] = await connection.query(
+            'SELECT username FROM team_members WHERE username = ? AND team_id = ?',
+            [req.user.username, team_id]
+        );
+        console.log('Team member check:', teamMember);
+        console.log('User role:', req.user.role);
+
+        // All users (admin, brand_user, receptionist) can create records
+        // Only set agent_name if the user is a team member
+        const agent_name = teamMember.length > 0 ? req.user.username : null;
 
         // Initialize C_unique_id variable
         let C_unique_id;
@@ -545,7 +549,7 @@ export const createCustomer = async (req, res) => {
                         disposition || 'interested',
                         QUEUE_NAME,
                         team_id,
-                        isAdmin ? null : req.user.username,
+                        agent_name,
                         C_unique_id,
                         comment || null,
                         formattedScheduledAt
@@ -620,7 +624,7 @@ export const createCustomer = async (req, res) => {
                 disposition || 'interested',
                 QUEUE_NAME,
                 team_id,
-                isAdmin ? null : req.user.username,
+                agent_name,
                 C_unique_id,
                 comment || null,
                 formattedScheduledAt
