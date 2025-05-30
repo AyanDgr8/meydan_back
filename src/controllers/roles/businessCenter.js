@@ -423,6 +423,19 @@ export const createBusinessTeams = async (req, res) => {
 
         await conn.beginTransaction();
 
+        // Get brand_id from business center
+        const [businessCenter] = await conn.query(
+            'SELECT brand_id FROM business_center WHERE id = ?',
+            [businessId]
+        );
+
+        if (businessCenter.length === 0) {
+            await conn.rollback();
+            throw new Error('Business center not found');
+        }
+
+        const brand_id = businessCenter[0].brand_id;
+
         const createdTeams = [];
         for (const team of teams) {
             const {
@@ -454,8 +467,9 @@ export const createBusinessTeams = async (req, res) => {
                     team_prompt,
                     team_detail,
                     business_center_id,
+                    brand_id,
                     created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     team_name,
                     tax_id,
@@ -467,6 +481,7 @@ export const createBusinessTeams = async (req, res) => {
                     team_prompt,
                     team_detail,
                     businessId,
+                    brand_id,
                     userId
                 ]
             );
@@ -482,6 +497,8 @@ export const createBusinessTeams = async (req, res) => {
                 team_country,
                 team_prompt,
                 team_detail,
+                business_center_id: businessId,
+                brand_id,
                 created_by: userId
             });
         }

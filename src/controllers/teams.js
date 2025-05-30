@@ -20,17 +20,19 @@ export const createTeam = async (req, res) => {
             // Convert spaces to underscores in team_name
             const formattedTeamName = team_name.replace(/\s+/g, '_');
 
-            // Check if team already exists for this brand
+            // Check if team already exists for this brand or business center
             const [existingTeam] = await conn.query(
-                'SELECT id FROM teams WHERE team_name = ? AND (brand_id = ? OR business_center_id IN (SELECT id FROM business_center WHERE brand_id = ?))',
-                [formattedTeamName, req.user.brand_id, req.user.brand_id]
+                `SELECT id FROM teams 
+                 WHERE (team_name = ? AND brand_id = ?) 
+                 OR (team_name = ? AND business_center_id = ?)`,
+                [formattedTeamName, req.user.brand_id, formattedTeamName, business_center_id]
             );
 
             if (existingTeam.length > 0) {
                 await conn.rollback();
                 return res.status(400).json({
                     success: false,
-                    message: 'Team already exists for this brand'
+                    message: 'Team name already exists in this brand or business center'
                 });
             }
 
@@ -56,11 +58,7 @@ export const createTeam = async (req, res) => {
                     team_name, tax_id, reg_no, team_detail, team_address, 
                     team_country, team_prompt, team_phone, team_email, 
                     team_type, created_by, brand_id, business_center_id
-                ) VALUES (
-                    ?, ?, ?, ?, ?, 
-                    ?, ?, ?, ?, 
-                    ?, ?, ?, ?
-                )`;
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
             
             const insertParams = [
                 formattedTeamName, tax_id, reg_no, team_detail, team_address,
@@ -69,9 +67,9 @@ export const createTeam = async (req, res) => {
             ];
 
             console.log('Creating team with params:', {
-                user_brand_id: req.user.brand_id,
-                business_center_id: business_center_id || null,
-                team_name: formattedTeamName
+                team_name: formattedTeamName,
+                brand_id: req.user.brand_id,
+                business_center_id: business_center_id || null
             });
 
             try {
@@ -90,10 +88,22 @@ export const createTeam = async (req, res) => {
                     [result.insertId]
                 );
 
+                if (!verifyTeam[0]) {
+                    console.error('Team not found after creation');
+                    await conn.rollback();
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to verify team creation'
+                    });
+                }
+
                 if (!verifyTeam[0].brand_id) {
                     console.error('Team created but brand_id is null:', verifyTeam[0]);
                     await conn.rollback();
-                    throw new Error('Failed to save brand_id');
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to save brand_id'
+                    });
                 }
 
                 console.log('Verification of inserted team:', verifyTeam[0]);
@@ -110,6 +120,15 @@ export const createTeam = async (req, res) => {
             } catch (error) {
                 console.error('Error creating team:', error);
                 await conn.rollback();
+                
+                // Check for duplicate entry errors
+                if (error.code === 'ER_DUP_ENTRY') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Team name must be unique within a brand and business center'
+                    });
+                }
+
                 res.status(500).json({
                     success: false,
                     message: 'Failed to create team',
