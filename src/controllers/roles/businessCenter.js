@@ -541,14 +541,32 @@ export const createBusinessAssociate = async (req, res) => {
                 throw new Error('Username, email, mobile number, and team ID are required');
             }
 
-            // Check if team belongs to the business center
+            // Check if team belongs to the business center and get brand_id
             const [teamCheck] = await conn.query(
-                'SELECT id FROM teams WHERE id = ? AND business_center_id = ?',
+                'SELECT t.id, bc.brand_id FROM teams t JOIN business_center bc ON t.business_center_id = bc.id WHERE t.id = ? AND t.business_center_id = ?',
                 [team_id, businessId]
             );
 
             if (teamCheck.length === 0) {
                 throw new Error('Invalid team ID for this business center');
+            }
+
+            // Get brand limits and current count
+            const [brandLimits] = await conn.query(
+                'SELECT associates FROM brand WHERE id = ?',
+                [teamCheck[0].brand_id]
+            );
+
+            const [currentCount] = await conn.query(
+                `SELECT COUNT(*) as count FROM team_members tm 
+                 JOIN teams t ON tm.team_id = t.id 
+                 JOIN business_center bc ON t.business_center_id = bc.id 
+                 WHERE bc.brand_id = ?`,
+                [teamCheck[0].brand_id]
+            );
+
+            if (currentCount[0].count >= brandLimits[0].associates) {
+                throw new Error(`Cannot create more associates. Brand limit (${brandLimits[0].associates}) reached.`);
             }
 
             // Check for existing user with same username or email only within the same team
@@ -600,6 +618,71 @@ export const createBusinessAssociate = async (req, res) => {
             message: error.message || 'Error creating associate',
             field: error.field
         });
+    } finally {
+        if (conn) {
+            conn.release();
+        }
+    }
+};
+
+// Get business counts
+export const getBusinessCounts = async (req, res) => {
+    let conn;
+    try {
+        const pool = connectDB();
+        conn = await pool.getConnection();
+        const businessId = req.params.id;
+
+        // First get the brand_id for this business center
+        const [business] = await conn.query(
+            'SELECT brand_id FROM business_center WHERE id = ?',
+            [businessId]
+        );
+
+        if (business.length === 0) {
+            return res.status(404).json({ message: 'Business center not found' });
+        }
+
+        const brandId = business[0].brand_id;
+
+        // Get total teams count for the brand
+        const [teamsCount] = await conn.query(
+            `SELECT COUNT(*) as count FROM teams t 
+             WHERE t.brand_id = ? OR EXISTS (
+                SELECT 1 FROM business_center bc 
+                WHERE bc.id = t.business_center_id AND bc.brand_id = ?
+             )`,
+            [brandId, brandId]
+        );
+
+        // Get total receptionists count for the brand
+        const [receptionistsCount] = await conn.query(
+            `SELECT COUNT(*) as count FROM receptionist r 
+             JOIN business_center bc ON r.business_center_id = bc.id 
+             WHERE bc.brand_id = ?`,
+            [brandId]
+        );
+
+        // Get total associates count for the brand
+        const [associatesCount] = await conn.query(
+            `SELECT COUNT(*) as count FROM team_members tm 
+             JOIN teams t ON tm.team_id = t.id 
+             WHERE t.brand_id = ? OR EXISTS (
+                SELECT 1 FROM business_center bc 
+                WHERE bc.id = t.business_center_id AND bc.brand_id = ?
+             )`,
+            [brandId, brandId]
+        );
+
+        res.json({
+            totalTeams: teamsCount[0].count,
+            totalReceptionists: receptionistsCount[0].count,
+            totalAssociates: associatesCount[0].count
+        });
+
+    } catch (error) {
+        console.error('Error getting business counts:', error);
+        res.status(500).json({ message: 'Error getting business counts' });
     } finally {
         if (conn) {
             conn.release();

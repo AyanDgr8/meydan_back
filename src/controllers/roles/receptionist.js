@@ -1,4 +1,4 @@
-// src/controllers/receptionist.js
+// src/controllers/roles/receptionist.js
 
 import connectDB from '../../db/index.js';
 
@@ -8,49 +8,92 @@ export const createReceptionist = async (req, res) => {
     try {
         const pool = connectDB();
         conn = await pool.getConnection();
-
         const {
             receptionist_name,
             receptionist_phone,
             receptionist_email,
+            business_center_id,
             rec_other_detail
         } = req.body;
 
-        if (!receptionist_name) {
-            return res.status(400).json({ message: 'Receptionist name is required' });
+        // Validate required fields
+        if (!receptionist_name || !business_center_id) {
+            return res.status(400).json({ message: 'Receptionist name and business center are required' });
+        }
+
+        // Check if business center exists and get brand_id
+        const [businessCenter] = await conn.query(
+            'SELECT id, brand_id FROM business_center WHERE id = ?',
+            [business_center_id]
+        );
+
+        if (businessCenter.length === 0) {
+            return res.status(404).json({ message: 'Business center not found' });
+        }
+
+        // Get brand limits and current count
+        const [brandLimits] = await conn.query(
+            'SELECT receptionist as receptionist_limit FROM brand WHERE id = ?',
+            [businessCenter[0].brand_id]
+        );
+
+        const [currentCount] = await conn.query(
+            `SELECT COUNT(*) as count FROM receptionist r 
+             JOIN business_center bc ON r.business_center_id = bc.id 
+             WHERE bc.brand_id = ?`,
+            [businessCenter[0].brand_id]
+        );
+
+        if (currentCount[0].count >= brandLimits[0].receptionist_limit) {
+            return res.status(400).json({ 
+                message: `Cannot create more receptionists. Brand limit (${brandLimits[0].receptionist_limit}) reached.` 
+            });
+        }
+
+        // Check if email already exists
+        if (receptionist_email) {
+            const [existingReceptionist] = await conn.query(
+                'SELECT id FROM receptionist WHERE receptionist_email = ?',
+                [receptionist_email]
+            );
+
+            if (existingReceptionist.length > 0) {
+                return res.status(400).json({ message: 'Email already exists' });
+            }
         }
 
         await conn.beginTransaction();
 
         const [result] = await conn.query(
             `INSERT INTO receptionist (
-                receptionist_name, receptionist_phone, 
-                receptionist_email, rec_other_detail
-            ) VALUES (?, ?, ?, ?)`,
+                receptionist_name,
+                receptionist_phone,
+                receptionist_email,
+                business_center_id,
+                rec_other_detail
+            ) VALUES (?, ?, ?, ?, ?)`,
             [
-                receptionist_name, receptionist_phone, 
-                receptionist_email, rec_other_detail
+                receptionist_name,
+                receptionist_phone,
+                receptionist_email,
+                business_center_id,
+                rec_other_detail || ''
             ]
         );
 
         await conn.commit();
-        
-        const [newReceptionist] = await conn.query(
-            'SELECT * FROM receptionist WHERE id = ?',
-            [result.insertId]
-        );
 
         res.status(201).json({
             message: 'Receptionist created successfully',
-            receptionist: newReceptionist[0]
+            id: result.insertId
         });
 
     } catch (error) {
         if (conn) {
             await conn.rollback();
         }
-        console.error('Error creating business:', error);
-        res.status(500).json({ message: 'Error creating business' });
+        console.error('Error creating receptionist:', error);
+        res.status(500).json({ message: 'Error creating receptionist', error: error.message });
     } finally {
         if (conn) {
             conn.release();
@@ -66,14 +109,17 @@ export const getAllReceptionists = async (req, res) => {
         conn = await pool.getConnection();
 
         const [receptionists] = await conn.query(
-            'SELECT * FROM receptionist ORDER BY created_at DESC'
+            `SELECT r.*, bc.business_name 
+             FROM receptionist r
+             LEFT JOIN business_center bc ON r.business_center_id = bc.id
+             ORDER BY r.created_at DESC`
         );
 
         res.json(receptionists);
 
     } catch (error) {
-        console.error('Error fetching businesses:', error);
-        res.status(500).json({ message: 'Error fetching businesses' });
+        console.error('Error fetching receptionists:', error);
+        res.status(500).json({ message: 'Error fetching receptionists' });
     } finally {
         if (conn) {
             conn.release();
@@ -89,7 +135,10 @@ export const getReceptionistById = async (req, res) => {
         conn = await pool.getConnection();
 
         const [receptionist] = await conn.query(
-            'SELECT * FROM receptionist WHERE id = ?',
+            `SELECT r.*, bc.business_name 
+             FROM receptionist r
+             LEFT JOIN business_center bc ON r.business_center_id = bc.id
+             WHERE r.id = ?`,
             [req.params.id]
         );
 
@@ -120,8 +169,24 @@ export const updateReceptionist = async (req, res) => {
             receptionist_name,
             receptionist_phone,
             receptionist_email,
+            business_center_id,
             rec_other_detail
         } = req.body;
+
+        // Validate required fields
+        if (!receptionist_name || !business_center_id) {
+            return res.status(400).json({ message: 'Receptionist name and business center are required' });
+        }
+
+        // Check if business center exists
+        const [businessCenter] = await conn.query(
+            'SELECT id FROM business_center WHERE id = ?',
+            [business_center_id]
+        );
+
+        if (businessCenter.length === 0) {
+            return res.status(404).json({ message: 'Business center not found' });
+        }
 
         await conn.beginTransaction();
 
@@ -130,12 +195,14 @@ export const updateReceptionist = async (req, res) => {
                 receptionist_name = ?,
                 receptionist_phone = ?,
                 receptionist_email = ?,
+                business_center_id = ?,
                 rec_other_detail = ?
             WHERE id = ?`,
             [
                 receptionist_name,
                 receptionist_phone,
                 receptionist_email,
+                business_center_id,
                 rec_other_detail,
                 req.params.id
             ]   
@@ -149,7 +216,10 @@ export const updateReceptionist = async (req, res) => {
         await conn.commit();
 
         const [updatedReceptionist] = await conn.query(
-            'SELECT * FROM receptionist WHERE id = ?',
+            `SELECT r.*, bc.business_name 
+             FROM receptionist r
+             LEFT JOIN business_center bc ON r.business_center_id = bc.id
+             WHERE r.id = ?`,
             [req.params.id]
         );
 
@@ -206,5 +276,3 @@ export const deleteReceptionist = async (req, res) => {
         }
     }
 };
-
-

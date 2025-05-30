@@ -141,3 +141,137 @@ export const getTeamMembers = async (req, res) => {
         }
     }
 };
+
+// Update team member
+export const updateTeamMember = async (req, res) => {
+    let connection;
+    try {
+        const pool = await connectDB();
+        connection = await pool.getConnection();
+
+        const { memberId } = req.params;
+        const {
+            username,
+            designation,
+            email,
+            mobile_num,
+            mobile_num_2
+        } = req.body;
+
+        // Start transaction
+        await connection.beginTransaction();
+
+        // Check if team member exists
+        const [existingMember] = await connection.query(
+            'SELECT * FROM team_members WHERE id = ?',
+            [memberId]
+        );
+
+        if (existingMember.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Team member not found'
+            });
+        }
+
+        // Update team member
+        const [result] = await connection.query(
+            `UPDATE team_members 
+             SET username = ?, 
+                 designation = ?,
+                 email = ?,
+                 mobile_num = ?,
+                 mobile_num_2 = ?
+             WHERE id = ?`,
+            [
+                username,
+                designation,
+                email,
+                mobile_num,
+                mobile_num_2,
+                memberId
+            ]
+        );
+
+        // Commit transaction
+        await connection.commit();
+
+        res.json({
+            success: true,
+            message: 'Team member updated successfully'
+        });
+
+    } catch (err) {
+        if (connection) {
+            await connection.rollback();
+        }
+        console.error('Error updating team member:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating team member',
+            error: err.message
+        });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+};
+
+// Delete team member
+export const deleteTeamMember = async (req, res) => {
+    let connection;
+    try {
+        const pool = await connectDB();
+        connection = await pool.getConnection();
+
+        const { memberId } = req.params;
+
+        // Start transaction
+        await connection.beginTransaction();
+
+        // Check if team member exists
+        const [existingMember] = await connection.query(
+            'SELECT * FROM team_members WHERE id = ?',
+            [memberId]
+        );
+
+        if (existingMember.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Team member not found'
+            });
+        }
+
+        // Delete team member
+        await connection.query(
+            'DELETE FROM team_members WHERE id = ?',
+            [memberId]
+        );
+
+        // Commit transaction
+        await connection.commit();
+
+        res.json({
+            success: true,
+            message: 'Team member deleted successfully'
+        });
+
+    } catch (err) {
+        if (connection) {
+            await connection.rollback();
+        }
+        console.error('Error deleting team member:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting team member',
+            error: err.message
+        });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+};

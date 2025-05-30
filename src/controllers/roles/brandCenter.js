@@ -378,3 +378,35 @@ export const getBrandHierarchy = async (req, res) => {
         }
     }
 };
+
+// Get brand limits
+export const getBrandLimits = async (req, res) => {
+    let conn;
+    try {
+        const pool = connectDB();
+        conn = await pool.getConnection();
+
+        // Get brand ID from authenticated user
+        const brand_id = req.user.brand_id;
+
+        // Get brand limits
+        const [brand] = await conn.query(
+            'SELECT companies, associates, receptionist FROM brand WHERE id = ?',
+            [brand_id]
+        );
+
+        if (brand.length === 0) {
+            return res.status(404).json({ message: 'Brand not found' });
+        }
+
+        res.json(brand[0]);
+
+    } catch (error) {
+        console.error('Error fetching brand limits:', error);
+        res.status(500).json({ message: 'Error fetching brand limits' });
+    } finally {
+        if (conn) {
+            conn.release();
+        }
+    }
+};

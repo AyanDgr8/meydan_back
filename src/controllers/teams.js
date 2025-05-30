@@ -17,6 +17,25 @@ export const createTeam = async (req, res) => {
         try {
             await conn.beginTransaction();
 
+            // Get brand limits and current count
+            const [brandLimits] = await conn.query(
+                'SELECT companies FROM brand WHERE id = ?',
+                [req.user.brand_id]
+            );
+
+            const [currentCount] = await conn.query(
+                'SELECT COUNT(*) as count FROM teams WHERE brand_id = ?',
+                [req.user.brand_id]
+            );
+
+            if (currentCount[0].count >= brandLimits[0].companies) {
+                await conn.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: `Cannot create more teams. Brand limit (${brandLimits[0].companies}) reached.`
+                });
+            }
+
             // Convert spaces to underscores in team_name
             const formattedTeamName = team_name.replace(/\s+/g, '_');
 
@@ -418,6 +437,271 @@ export const getTeamByName = async (req, res) => {
     } finally {
         if (connection) {
             connection.release();
+        }
+    }
+};
+
+// Update team
+export const updateTeam = async (req, res) => {
+    const { team_name, tax_id, reg_no, team_detail, team_address, team_country, team_prompt, team_phone, team_email } = req.body;
+    const teamId = req.params.id;
+    let conn;
+
+    try {
+        const pool = connectDB();
+        conn = await pool.getConnection();
+
+        await conn.beginTransaction();
+
+        // Convert spaces to underscores in team_name if provided
+        const formattedTeamName = team_name ? team_name.replace(/\s+/g, '_') : undefined;
+
+        // Check if team exists and belongs to user's brand/business center
+        const [existingTeam] = await conn.query(
+            'SELECT * FROM teams WHERE id = ?',
+            [teamId]
+        );
+
+        if (existingTeam.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Team not found'
+            });
+        }
+
+        // If user is brand_user, verify they have access to this team
+        if (req.user.role === 'brand_user') {
+            const [teamAccess] = await conn.query(
+                `SELECT t.id 
+                 FROM teams t 
+                 LEFT JOIN business_center bc ON t.business_center_id = bc.id 
+                 WHERE t.id = ? AND (t.brand_id = ? OR bc.brand_id = ?)`,
+                [teamId, req.user.brand_id, req.user.brand_id]
+            );
+
+            if (teamAccess.length === 0) {
+                await conn.rollback();
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to update this team'
+                });
+            }
+        }
+
+        // If updating team name, check if new name already exists
+        if (formattedTeamName) {
+            const [nameExists] = await conn.query(
+                `SELECT id FROM teams 
+                 WHERE team_name = ? AND id != ? AND 
+                 (brand_id = ? OR business_center_id = ?)`,
+                [formattedTeamName, teamId, existingTeam[0].brand_id, existingTeam[0].business_center_id]
+            );
+
+            if (nameExists.length > 0) {
+                await conn.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Team name already exists in this brand or business center'
+                });
+            }
+        }
+
+        // Build update query dynamically based on provided fields
+        const updates = [];
+        const params = [];
+        
+        if (formattedTeamName) {
+            updates.push('team_name = ?');
+            params.push(formattedTeamName);
+        }
+        if (tax_id !== undefined) {
+            updates.push('tax_id = ?');
+            params.push(tax_id);
+        }
+        if (reg_no !== undefined) {
+            updates.push('reg_no = ?');
+            params.push(reg_no);
+        }
+        if (team_detail !== undefined) {
+            updates.push('team_detail = ?');
+            params.push(team_detail);
+        }
+        if (team_address !== undefined) {
+            updates.push('team_address = ?');
+            params.push(team_address);
+        }
+        if (team_country !== undefined) {
+            updates.push('team_country = ?');
+            params.push(team_country);
+        }
+        if (team_prompt !== undefined) {
+            updates.push('team_prompt = ?');
+            params.push(team_prompt);
+        }
+        if (team_phone !== undefined) {
+            updates.push('team_phone = ?');
+            params.push(team_phone);
+        }
+        if (team_email !== undefined) {
+            updates.push('team_email = ?');
+            params.push(team_email);
+        }
+
+        if (updates.length === 0) {
+            await conn.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'No fields to update'
+            });
+        }
+
+        // Add teamId to params
+        params.push(teamId);
+
+        // Update team
+        const [result] = await conn.query(
+            `UPDATE teams SET ${updates.join(', ')} WHERE id = ?`,
+            params
+        );
+
+        if (result.affectedRows === 0) {
+            await conn.rollback();
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to update team'
+            });
+        }
+
+        // Get updated team data
+        const [updatedTeam] = await conn.query(
+            `SELECT t.*, 
+                    bc.business_name as business_center_name,
+                    b.brand_name
+             FROM teams t 
+             LEFT JOIN business_center bc ON t.business_center_id = bc.id
+             LEFT JOIN brand b ON t.brand_id = b.id
+             WHERE t.id = ?`,
+            [teamId]
+        );
+
+        await conn.commit();
+
+        res.json({
+            success: true,
+            message: 'Team updated successfully',
+            team: updatedTeam[0]
+        });
+
+    } catch (error) {
+        if (conn) {
+            await conn.rollback();
+        }
+        console.error('Error updating team:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating team',
+            error: error.message
+        });
+    } finally {
+        if (conn) {
+            conn.release();
+        }
+    }
+};
+
+// Delete team
+export const deleteTeam = async (req, res) => {
+    const teamId = req.params.id;
+    let conn;
+
+    try {
+        const pool = connectDB();
+        conn = await pool.getConnection();
+
+        await conn.beginTransaction();
+
+        // Check if team exists and belongs to user's brand/business center
+        const [existingTeam] = await conn.query(
+            'SELECT * FROM teams WHERE id = ?',
+            [teamId]
+        );
+
+        if (existingTeam.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Team not found'
+            });
+        }
+
+        // If user is brand_user, verify they have access to this team
+        if (req.user.role === 'brand_user') {
+            const [teamAccess] = await conn.query(
+                `SELECT t.id 
+                 FROM teams t 
+                 LEFT JOIN business_center bc ON t.business_center_id = bc.id 
+                 WHERE t.id = ? AND (t.brand_id = ? OR bc.brand_id = ?)`,
+                [teamId, req.user.brand_id, req.user.brand_id]
+            );
+
+            if (teamAccess.length === 0) {
+                await conn.rollback();
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to delete this team'
+                });
+            }
+        }
+
+        // Check if team has any members
+        const [teamMembers] = await conn.query(
+            'SELECT COUNT(*) as count FROM team_members WHERE team_id = ?',
+            [teamId]
+        );
+
+        if (teamMembers[0].count > 0) {
+            await conn.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot delete team that has members. Please remove all team members first.'
+            });
+        }
+
+        // Delete team
+        const [result] = await conn.query(
+            'DELETE FROM teams WHERE id = ?',
+            [teamId]
+        );
+
+        if (result.affectedRows === 0) {
+            await conn.rollback();
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to delete team'
+            });
+        }
+
+        await conn.commit();
+
+        res.json({
+            success: true,
+            message: 'Team deleted successfully'
+        });
+
+    } catch (error) {
+        if (conn) {
+            await conn.rollback();
+        }
+        console.error('Error deleting team:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting team',
+            error: error.message
+        });
+    } finally {
+        if (conn) {
+            conn.release();
         }
     }
 };

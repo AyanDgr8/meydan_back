@@ -31,7 +31,13 @@ import {
 } from '../controllers/sign.js';
 
 import { getReminders, getAllReminders, getScheduleRecords } from '../controllers/schedule.js';
-import { getAllTeams, getTeamsByBusinessId, getTeamByName } from '../controllers/teams.js';
+import { 
+    getAllTeams, 
+    getTeamsByBusinessId, 
+    getTeamByName,
+    updateTeam,
+    deleteTeam 
+} from '../controllers/teams.js';
 
 // import { uploadCustomerData, confirmUpload } from '../controllers/uploadFile.js';
 import { downloadCustomerData, getQueueNames } from '../controllers/downloadFile.js';
@@ -54,7 +60,7 @@ import {
 
 import { validateSession } from '../middlewares/sessionMiddleware.js';
 
-import { createUser, getAllUsers, getTeamMembers } from '../controllers/users.js';
+import { createUser, getAllUsers, getTeamMembers, updateTeamMember, deleteTeamMember } from '../controllers/users.js';
 
 import { 
     createBusiness,
@@ -64,7 +70,8 @@ import {
     deleteBusiness,
     createBusinessTeams, 
     getBusinessTeams, 
-    createBusinessAssociate // Import the new controller function
+    createBusinessAssociate, 
+    getBusinessCounts 
 } from '../controllers/roles/businessCenter.js';
 
 import { 
@@ -74,7 +81,8 @@ import {
     updateBrand,
     deleteBrand,
     getBrandBusinessCenters,
-    getBrandHierarchy
+    getBrandHierarchy,
+    getBrandLimits
 } from '../controllers/roles/brandCenter.js';
 
 import { 
@@ -120,6 +128,12 @@ router.get('/players/teams', authenticateToken, getAllTeams);
 router.get('/business/:businessId/teams', authenticateToken, getTeamsByBusinessId);
 router.get('/business/:businessId/team/:teamId/members', authenticateToken, getTeamMembers);
 router.get('/users/team/:teamId', authenticateToken, getTeamMembers);
+router.put('/team/:id', authenticateToken, updateTeam);
+router.delete('/team/:id', authenticateToken, deleteTeam);
+
+// Team member routes
+router.put('/team/member/:memberId', authenticateToken, updateTeamMember);
+router.delete('/team/member/:memberId', authenticateToken, deleteTeamMember);
 
 // User routes
 router.get('/current-queue', authenticateToken, async (req, res) => {
@@ -202,6 +216,7 @@ router.post('/send-whatsapp', authenticateToken, sendNewCustomerWhatsApp);
 // Brand routes
 router.post('/brand', authenticateToken, createBrand);
 router.get('/brand', authenticateToken, getAllBrands);
+router.get('/brand/limits', authenticateToken, getBrandLimits);
 router.get('/brand/:id', authenticateToken, getBrandById);
 router.put('/brand/:id', authenticateToken, updateBrand);
 router.delete('/brand/:id', authenticateToken, deleteBrand);
@@ -212,6 +227,7 @@ router.get('/brand/:brandId/hierarchy', authenticateToken, getBrandHierarchy);
 router.post('/business', authenticateToken, createBusiness);
 router.get('/business', authenticateToken, getAllBusinesses);
 router.get('/business/:id', authenticateToken, getBusinessById);
+router.get('/business/:id/counts', authenticateToken, getBusinessCounts);
 router.put('/business/:id', authenticateToken, updateBusiness);
 router.delete('/business/:id', authenticateToken, deleteBusiness);
 router.post('/business/:id/teams', authenticateToken, createBusinessTeams);

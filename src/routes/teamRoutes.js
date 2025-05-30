@@ -91,6 +91,146 @@ router.get('/:teamName/:phone_no', authenticateToken, async (req, res) => {
     }
 });
 
+// Update team
+router.put('/:teamId', authenticateToken, async (req, res) => {
+    let connection;
+    try {
+        const pool = await connectDB();
+        connection = await pool.getConnection();
+
+        const { teamId } = req.params;
+        const {
+            team_name,
+            tax_id,
+            reg_no,
+            team_phone,
+            team_email,
+            team_address,
+            team_country,
+            team_prompt,
+            team_detail
+        } = req.body;
+
+        // Start transaction
+        await connection.beginTransaction();
+
+        // Update team
+        const [result] = await connection.query(
+            `UPDATE teams 
+             SET team_name = ?, 
+                 tax_id = ?,
+                 reg_no = ?,
+                 team_phone = ?,
+                 team_email = ?,
+                 team_address = ?,
+                 team_country = ?,
+                 team_prompt = ?,
+                 team_detail = ?
+             WHERE id = ?`,
+            [
+                team_name,
+                tax_id,
+                reg_no,
+                team_phone,
+                team_email,
+                team_address,
+                team_country,
+                team_prompt,
+                team_detail,
+                teamId
+            ]
+        );
+
+        if (result.affectedRows === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Team not found'
+            });
+        }
+
+        // Commit transaction
+        await connection.commit();
+
+        res.json({
+            success: true,
+            message: 'Team updated successfully'
+        });
+
+    } catch (err) {
+        if (connection) {
+            await connection.rollback();
+        }
+        console.error('Error updating team:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating team',
+            error: err.message
+        });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+});
+
+// Delete team
+router.delete('/:teamId', authenticateToken, async (req, res) => {
+    let connection;
+    try {
+        const pool = await connectDB();
+        connection = await pool.getConnection();
+
+        const { teamId } = req.params;
+
+        // Start transaction
+        await connection.beginTransaction();
+
+        // Check if team exists and get its details for verification
+        const [team] = await connection.query(
+            'SELECT * FROM teams WHERE id = ?',
+            [teamId]
+        );
+
+        if (team.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: 'Team not found'
+            });
+        }
+
+        // Delete team
+        const [result] = await connection.query(
+            'DELETE FROM teams WHERE id = ?',
+            [teamId]
+        );
+
+        // Commit transaction
+        await connection.commit();
+
+        res.json({
+            success: true,
+            message: 'Team deleted successfully'
+        });
+
+    } catch (err) {
+        if (connection) {
+            await connection.rollback();
+        }
+        console.error('Error deleting team:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Error deleting team',
+            error: err.message
+        });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+});
+
 // User management routes
 router.post('/players/users', authenticateToken, createUser);
 router.get('/players/users', authenticateToken, getAllUsers);
