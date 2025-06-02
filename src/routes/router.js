@@ -71,7 +71,8 @@ import {
     createBusinessTeams, 
     getBusinessTeams, 
     createBusinessAssociate, 
-    getBusinessCounts 
+    getBusinessCounts,
+    getBusinessCenterTeams
 } from '../controllers/roles/businessCenter.js';
 
 import { 
@@ -240,5 +241,8 @@ router.get('/receptionist', authenticateToken, getAllReceptionists);
 router.get('/receptionist/:id', authenticateToken, getReceptionistById);
 router.put('/receptionist/:id', authenticateToken, updateReceptionist);
 router.delete('/receptionist/:id', authenticateToken, deleteReceptionist);
+
+// Business center routes for receptionists
+router.get('/business-center/:id/teams', authenticateToken, getBusinessCenterTeams);
 
 export default router;

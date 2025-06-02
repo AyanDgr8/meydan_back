@@ -722,3 +722,59 @@ export const getBusinessCounts = async (req, res) => {
         }
     }
 };
+
+// Get teams for a business center (receptionist access)
+export const getBusinessCenterTeams = async (req, res) => {
+    let conn;
+    try {
+        const pool = connectDB();
+        conn = await pool.getConnection();
+        const businessCenterId = req.params.id;
+        const user = req.user;
+
+        // Verify user is a receptionist and has access to this business center
+        if (user.role !== 'receptionist') {
+            return res.status(403).json({ 
+                message: 'Access denied. Only receptionists can access this endpoint.'
+            });
+        }
+
+        // Check if user has access to this business center
+        const [userAccess] = await conn.query(
+            `SELECT u.* 
+             FROM users u
+             WHERE u.id = ? 
+             AND u.business_center_id = ?
+             AND u.role_id = (SELECT id FROM roles WHERE role_name = 'receptionist')`,
+            [user.userId, businessCenterId]
+        );
+
+        if (userAccess.length === 0) {
+            return res.status(403).json({ 
+                message: 'Access denied. Receptionist does not belong to this business center.'
+            });
+        }
+
+        // Get teams for this business center
+        const [teams] = await conn.query(
+            `SELECT t.*, u.username as created_by_name 
+             FROM teams t 
+             JOIN users u ON t.created_by = u.id 
+             WHERE t.business_center_id = ?
+             ORDER BY t.created_at DESC`,
+            [businessCenterId]
+        );
+
+        res.json({
+            teams: teams
+        });
+
+    } catch (error) {
+        console.error('Error fetching business center teams:', error);
+        res.status(500).json({ message: 'Error fetching teams' });
+    } finally {
+        if (conn) {
+            conn.release();
+        }
+    }
+};

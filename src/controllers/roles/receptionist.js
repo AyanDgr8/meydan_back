@@ -1,6 +1,7 @@
 // src/controllers/roles/receptionist.js
 
 import connectDB from '../../db/index.js';
+import nodemailer from 'nodemailer';
 
 // Create a new receptionist
 export const createReceptionist = async (req, res) => {
@@ -21,15 +22,28 @@ export const createReceptionist = async (req, res) => {
             return res.status(400).json({ message: 'Receptionist name and business center are required' });
         }
 
-        // Check if business center exists and get brand_id
+        // Check if business center exists and get brand_id and business_email
         const [businessCenter] = await conn.query(
-            'SELECT id, brand_id FROM business_center WHERE id = ?',
+            'SELECT id, brand_id, business_name, business_email, business_password FROM business_center WHERE id = ?',
             [business_center_id]
         );
 
         if (businessCenter.length === 0) {
             return res.status(404).json({ message: 'Business center not found' });
         }
+
+        if (!businessCenter[0].business_email || !businessCenter[0].business_password) {
+            return res.status(400).json({ message: 'Business center email or password not configured' });
+        }
+
+        // Create transporter with business center credentials
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: businessCenter[0].business_email,
+                pass: businessCenter[0].business_password
+            }
+        });
 
         // Get brand limits and current count
         const [brandLimits] = await conn.query(
@@ -82,6 +96,34 @@ export const createReceptionist = async (req, res) => {
         );
 
         await conn.commit();
+
+        // Send welcome email
+        if (receptionist_email) {
+            try {
+                const mailOptions = {
+                    from: businessCenter[0].business_email,
+                    to: receptionist_email,
+                    subject: 'Welcome to ' + businessCenter[0].business_name,
+                    html: `
+                        <p>Dear ${receptionist_name},</p>
+                        <p>Your account has been created as a receptionist in the ${businessCenter[0].business_name}.</p>
+                        <p>Your login credentials:</p>
+                        <ul>
+                            <li>Username: ${receptionist_name}</li>
+                            <li>Default password: 12345678</li>
+                        </ul>
+                        <p>Please change your password after your first login for security purposes.</p>
+                        <p>Best regards,<br>Team ${businessCenter[0].business_name} </p>
+                    `
+                };
+
+                await transporter.sendMail(mailOptions);
+                console.log('Welcome email sent to receptionist:', receptionist_email);
+            } catch (emailError) {
+                console.error('Error sending welcome email:', emailError);
+                // Don't fail the request if email sending fails
+            }
+        }
 
         res.status(201).json({
             message: 'Receptionist created successfully',

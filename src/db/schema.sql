@@ -60,17 +60,15 @@ CREATE TABLE IF NOT EXISTS teams (
     team_email VARCHAR(100) DEFAULT NULL,
     team_type ENUM('company', 'department') NOT NULL DEFAULT 'company',
     business_center_id INT NOT NULL,
+    brand_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_by INT NOT NULL,
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_team_business (team_name, business_center_id)
+    FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_team_business (team_name, business_center_id),
+    UNIQUE KEY unique_team_brand (team_name, brand_id)
 );
-ALTER TABLE teams
-    MODIFY COLUMN business_center_id INT NULL,
-    ADD COLUMN brand_id INT after business_center_id,
-    ADD FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE,
-    ADD UNIQUE KEY unique_team_brand (team_name, brand_id);
 
 -- Create team_members (users)
 CREATE TABLE IF NOT EXISTS team_members (
@@ -316,9 +314,11 @@ CREATE TABLE IF NOT EXISTS receptionist (
     receptionist_email VARCHAR(100),
     rec_other_detail TEXT,
     business_center_id INT NOT NULL,
+    brand_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE
+    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE,
+    FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE
 );
 
 DELIMITER $$
@@ -329,19 +329,41 @@ CREATE TRIGGER before_receptionist_insert
 BEFORE INSERT ON receptionist
 FOR EACH ROW
 BEGIN
-    DECLARE counter INT DEFAULT 1;
-    DECLARE temp_id VARCHAR(50);
-    DECLARE base_name VARCHAR(45);
+    DECLARE bc_brand_id INT;
     
-    SET base_name = 'REC';
-    SET temp_id = CONCAT(base_name, counter);
+    -- Get brand_id from business_center
+    SELECT brand_id INTO bc_brand_id
+    FROM business_center 
+    WHERE id = NEW.business_center_id;
     
-    WHILE EXISTS (SELECT 1 FROM receptionist WHERE rec_unique_id = temp_id) DO
-        SET counter = counter + 1;
-        SET temp_id = CONCAT(base_name, counter);
-    END WHILE;
-    
-    SET NEW.rec_unique_id = temp_id;
+    -- Set the brand_id
+    SET NEW.brand_id = bc_brand_id;
+END$$
+
+DROP TRIGGER IF EXISTS after_receptionist_insert$$
+
+CREATE TRIGGER after_receptionist_insert
+AFTER INSERT ON receptionist
+FOR EACH ROW
+BEGIN
+    -- Create user account for receptionist
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        business_center_id,
+        brand_id
+    )
+    SELECT 
+        NEW.receptionist_name,
+        NEW.receptionist_email,
+        '$2b$10$vB8FzjqZ.XmA1mJs4SANpeI2LK9GrORmUgU2Pgwb5oTRZTVkinhry', -- Hashed version of '12345678'
+        r.id,
+        NEW.business_center_id,
+        NEW.brand_id
+    FROM roles r
+    WHERE r.role_name = 'receptionist';
 END$$
 
 DROP TRIGGER IF EXISTS update_receptionist_modtime$$
@@ -350,11 +372,21 @@ CREATE TRIGGER update_receptionist_modtime
 BEFORE UPDATE ON receptionist
 FOR EACH ROW
 BEGIN
+    DECLARE bc_brand_id INT;
+    
     SET NEW.updated_at = CURRENT_TIMESTAMP;
+    
+    -- If business_center_id changes, update brand_id
+    IF NEW.business_center_id != OLD.business_center_id THEN
+        SELECT brand_id INTO bc_brand_id
+        FROM business_center 
+        WHERE id = NEW.business_center_id;
+        
+        SET NEW.brand_id = bc_brand_id;
+    END IF;
 END$$
 
 DELIMITER ;
-
 
 -- ***************
 -- ***************
@@ -423,36 +455,6 @@ BEGIN
 END$$
 
 DELIMITER ;
-
--- Create trigger to handle user creation from receptionist
-DELIMITER $$
-
-DROP TRIGGER IF EXISTS after_receptionist_insert$$
-
-CREATE TRIGGER after_receptionist_insert
-AFTER INSERT ON receptionist
-FOR EACH ROW
-BEGIN
-    -- Create user account for receptionist
-    INSERT INTO users (
-        username,
-        email,
-        password,
-        role_id,
-        business_center_id
-    )
-    SELECT 
-        NEW.receptionist_name,
-        NEW.receptionist_email,
-        '$2b$10$vB8FzjqZ.XmA1mJs4SANpeI2LK9GrORmUgU2Pgwb5oTRZTVkinhry', -- Hashed version of '12345678'
-        r.id,
-        NEW.business_center_id
-    FROM roles r
-    WHERE r.role_name = 'receptionist';
-END$$
-
-DELIMITER ;
-
 
 -- Table List
 -- 1 admin
