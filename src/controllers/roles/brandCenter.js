@@ -105,15 +105,48 @@ export const getAllBrands = async (req, res) => {
         const pool = connectDB();
         conn = await pool.getConnection();
 
-        const [brands] = await conn.query(
-            'SELECT * FROM brand ORDER BY created_at DESC'
-        );
+        // For admin users, return all brands
+        // For brand users, only return their specific brand
+        const isAdmin = req.user.isAdmin || req.user.role === 'admin';
+        const brandId = req.user.brand_id;
+
+        console.log('User requesting brands:', {
+            isAdmin,
+            brandId,
+            role: req.user.role,
+            userId: req.user.userId,
+            fullUser: req.use
+        });
+
+        let query = 'SELECT * FROM brand';
+        let params = [];
+
+        // Admin users can see all brands
+        // Non-admin users should have already been filtered by the auth middleware
+        if (!isAdmin && brandId) {
+            query += ' WHERE id = ?';
+            params.push(brandId);
+        }
+
+        query += ' ORDER BY created_at DESC';
+        console.log('Executing query:', query, 'with params:', params);
+
+        const [brands] = await conn.query(query, params);
+        console.log(`Found ${brands.length} brands`);
+
+        if (brands.length === 0) {
+            console.log('No brands found for query');
+        }
 
         res.json(brands);
 
     } catch (error) {
         console.error('Error fetching brands:', error);
-        res.status(500).json({ message: 'Error fetching brands' });
+        res.status(500).json({ 
+            message: 'Error fetching brands',
+            error: error.message,
+            stack: error.stack
+        });
     } finally {
         if (conn) {
             conn.release();

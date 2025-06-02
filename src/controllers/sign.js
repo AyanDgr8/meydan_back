@@ -111,14 +111,14 @@ export const loginAdmin = async (req, res) => {
                 const token = jwt.sign(
                     {
                         userId: user.id,
-                        email: user.email,
                         username: user.username,
+                        email: user.email,
                         role: user.role_name,
-                        isAdmin: user.role_name === 'admin', // This will be true only for admin table users
-                        deviceId,
-                        sessionId: loginResult.insertId,
+                        isAdmin: user.role_name === 'admin', // Explicitly set isAdmin based on role
                         brand_id: user.brand_id || null,
-                        business_center_id: user.business_center_id || null
+                        business_center_id: user.business_center_id || null,
+                        deviceId,
+                        sessionId: loginResult.insertId
                     },
                     process.env.JWT_SECRET,
                     { expiresIn: JWT_EXPIRATION }
@@ -126,14 +126,14 @@ export const loginAdmin = async (req, res) => {
 
                 await connection.commit();
 
-                res.status(200).json({
+                res.json({
                     success: true,
-                    message: 'Login successful',
                     data: {
                         id: user.id,
                         username: user.username,
                         email: user.email,
                         role: user.role_name,
+                        isAdmin: user.role_name === 'admin', // Also include in response
                         brand_id: user.brand_id || null,
                         business_center_id: user.business_center_id || null,
                         token
@@ -149,21 +149,19 @@ export const loginAdmin = async (req, res) => {
             }
 
         } catch (error) {
-            // Check if error is a deadlock
-            if (error.code === 'ER_LOCK_DEADLOCK' && retryCount < maxRetries - 1) {
-                retryCount++;
-                // Exponential backoff: wait 1s, 2s, 4s
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount - 1) * 1000));
-                continue;
+            console.error('Login error:', error);
+            retryCount++;
+
+            if (retryCount === maxRetries) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Server error, please try again',
+                    error: error.message
+                });
             }
 
-            logger.error('Login error:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Error during login',
-                error: error.message
-            });
-            break;
+            // Wait before retrying (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
         } finally {
             if (connection) {
                 connection.release();

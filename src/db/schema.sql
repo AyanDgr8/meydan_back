@@ -355,34 +355,6 @@ END$$
 
 DELIMITER ;
 
--- Create trigger to handle user creation from receptionist
-DELIMITER $$
-
-DROP TRIGGER IF EXISTS after_receptionist_insert$$
-
-CREATE TRIGGER after_receptionist_insert
-AFTER INSERT ON receptionist
-FOR EACH ROW
-BEGIN
-    -- Create user account for receptionist
-    INSERT INTO users (
-        username,
-        email,
-        password,
-        role_id,
-        business_center_id
-    )
-    SELECT 
-        NEW.receptionist_name,
-        NEW.receptionist_email,
-        '12345678', -- Default password
-        r.id,
-        NEW.business_center_id
-    FROM roles r
-    WHERE r.role_name = 'receptionist';
-END$$
-
-DELIMITER ;
 
 -- ***************
 -- ***************
@@ -472,7 +444,7 @@ BEGIN
     SELECT 
         NEW.receptionist_name,
         NEW.receptionist_email,
-        '12345678', -- Default password
+        '$2b$10$vB8FzjqZ.XmA1mJs4SANpeI2LK9GrORmUgU2Pgwb5oTRZTVkinhry', -- Hashed version of '12345678'
         r.id,
         NEW.business_center_id
     FROM roles r

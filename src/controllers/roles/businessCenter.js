@@ -74,19 +74,52 @@ export const getAllBusinesses = async (req, res) => {
         const pool = connectDB();
         conn = await pool.getConnection();
 
-        // Get brand_id from authenticated user
+        // Get user info from authenticated user
+        const isAdmin = req.user.isAdmin || req.user.role === 'admin';
         const brand_id = req.user.brand_id;
 
-        const [businesses] = await conn.query(
-            'SELECT * FROM business_center WHERE brand_id = ? ORDER BY created_at DESC',
-            [brand_id]
-        );
+        console.log('User requesting businesses:', {
+            isAdmin,
+            brand_id,
+            role: req.user.role,
+            userId: req.user.userId,
+            fullUser: req.user
+        });
+
+        // Modified query to include brand name
+        let query = `
+            SELECT bc.*, b.brand_name 
+            FROM business_center bc
+            LEFT JOIN brand b ON bc.brand_id = b.id
+        `;
+        let params = [];
+
+        // Admin users can see all business centers
+        // Non-admin users only see their brand's business centers
+        if (!isAdmin && brand_id) {
+            query += ' WHERE bc.brand_id = ?';
+            params.push(brand_id);
+        }
+
+        query += ' ORDER BY bc.created_at DESC';
+        console.log('Executing query:', query, 'with params:', params);
+
+        const [businesses] = await conn.query(query, params);
+        console.log(`Found ${businesses.length} businesses`);
+
+        if (businesses.length === 0) {
+            console.log('No businesses found for query');
+        }
 
         res.json(businesses);
 
     } catch (error) {
         console.error('Error fetching businesses:', error);
-        res.status(500).json({ message: 'Error fetching businesses' });
+        res.status(500).json({ 
+            message: 'Error fetching businesses',
+            error: error.message,
+            stack: error.stack
+        });
     } finally {
         if (conn) {
             conn.release();

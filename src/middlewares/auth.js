@@ -39,16 +39,27 @@ export const authenticateToken = async (req, res, next) => {
             // Store full decoded token
             req.decodedToken = decoded;
 
+            // Check if user is admin based on role
+            const isAdmin = decoded.role === 'admin' || decoded.isAdmin === true;
+
             // Set essential user info including role and brand_id
             req.user = {
                 userId: userId,
                 username: decoded.username,
                 email: decoded.email,
-                role: decoded.role,
+                role: decoded.role || (isAdmin ? 'admin' : 'user'),
+                isAdmin: isAdmin,
                 brand_id: decoded.brand_id,
-                business_center_id: decoded.business_center_id,
-                isAdmin: decoded.isAdmin || false
+                business_center_id: decoded.business_center_id
             };
+
+            // Only check for brand_id if user is not an admin
+            if (!isAdmin && !decoded.brand_id) {
+                return res.status(403).json({ 
+                    message: "Access denied. Brand ID not found.",
+                    details: "Non-admin users must have an associated brand."
+                });
+            }
 
             console.log('Set request user:', req.user);
             next();

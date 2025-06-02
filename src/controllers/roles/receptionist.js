@@ -250,6 +250,24 @@ export const deleteReceptionist = async (req, res) => {
 
         await conn.beginTransaction();
 
+        // First get the receptionist details to find corresponding user
+        const [receptionist] = await conn.query(
+            'SELECT receptionist_name, receptionist_email FROM receptionist WHERE id = ?',
+            [req.params.id]
+        );
+
+        if (receptionist.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Receptionist not found' });
+        }
+
+        // Delete the corresponding user first (due to foreign key constraints)
+        await conn.query(
+            'DELETE FROM users WHERE username = ? AND email = ? AND role_id = (SELECT id FROM roles WHERE role_name = "receptionist")',
+            [receptionist[0].receptionist_name, receptionist[0].receptionist_email]
+        );
+
+        // Then delete the receptionist
         const [result] = await conn.query(
             'DELETE FROM receptionist WHERE id = ?',
             [req.params.id]
@@ -261,15 +279,14 @@ export const deleteReceptionist = async (req, res) => {
         }
 
         await conn.commit();
-
-        res.json({ message: 'Receptionist deleted successfully' });
+        res.json({ message: 'Receptionist and associated user account deleted successfully' });
 
     } catch (error) {
         if (conn) {
             await conn.rollback();
         }
         console.error('Error deleting receptionist:', error);
-        res.status(500).json({ message: 'Error deleting receptionist' });
+        res.status(500).json({ message: 'Error deleting receptionist', error: error.message });
     } finally {
         if (conn) {
             conn.release();

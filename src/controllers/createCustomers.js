@@ -2,7 +2,6 @@
 
 import connectDB from '../db/index.js';
 
-
 export const makeNewRecord = async (req, res) => {
     let connection;
     try {
