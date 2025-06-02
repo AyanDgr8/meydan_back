@@ -8,6 +8,7 @@ export const createUser = async (req, res) => {
 
     const {
         username,
+        department,
         email,
         mobile_num,
         mobile_num_2,
@@ -16,8 +17,8 @@ export const createUser = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!username || !email || !mobile_num || !team_id || !designation) {
-        console.log('Missing fields:', { username, email, mobile_num, team_id, designation });
+    if (!username || !email || !mobile_num || !team_id) {
+        console.log('Missing fields:', { username, email, mobile_num, team_id });
         return res.status(400).json({ 
             error: 'Missing required fields: username, email, mobile_num, and team_id are required',
             received: { username, email, mobile_num, team_id }
@@ -58,8 +59,8 @@ export const createUser = async (req, res) => {
 
             // Create user
             const [userResult] = await conn.query(
-                'INSERT INTO team_members (username, email, mobile_num, mobile_num_2, team_id, designation) VALUES (?, ?, ?, ?, ?, ?)',
-                [username, email, mobile_num, mobile_num_2, team_id, designation]
+                'INSERT INTO team_members (username, department, email, mobile_num, mobile_num_2, team_id) VALUES (?, ?, ?, ?, ?, ?)',
+                [username, department, email, mobile_num, mobile_num_2, team_id]
             );
 
             await conn.commit();
@@ -152,6 +153,7 @@ export const updateTeamMember = async (req, res) => {
         const { memberId } = req.params;
         const {
             username,
+            department,
             designation,
             email,
             mobile_num,
@@ -180,6 +182,7 @@ export const updateTeamMember = async (req, res) => {
             `UPDATE team_members 
              SET username = ?, 
                  designation = ?,
+                 department = ?,
                  email = ?,
                  mobile_num = ?,
                  mobile_num_2 = ?
@@ -187,6 +190,7 @@ export const updateTeamMember = async (req, res) => {
             [
                 username,
                 designation,
+                department,
                 email,
                 mobile_num,
                 mobile_num_2,

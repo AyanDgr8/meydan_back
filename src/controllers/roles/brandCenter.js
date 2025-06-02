@@ -28,6 +28,8 @@ export const createBrand = async (req, res) => {
             brand_email,
             brand_tax_id,
             brand_reg_no,
+            brand_person,
+            centers,
             companies,
             associates,
             receptionist,
@@ -46,12 +48,12 @@ export const createBrand = async (req, res) => {
 
         const [result] = await conn.query(
             `INSERT INTO brand (
-                brand_name, brand_phone, brand_email, brand_password, 
+                brand_name, brand_phone, brand_email, brand_password, brand_person, centers, 
                 brand_tax_id, brand_reg_no, companies, associates, receptionist,
                 brand_other_detail
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                brand_name, brand_phone, brand_email, hashedPassword, 
+                brand_name, brand_phone, brand_email, hashedPassword, brand_person, centers, 
                 brand_tax_id, brand_reg_no, companies, associates, receptionist, brand_other_detail
             ]
         );
@@ -194,6 +196,8 @@ export const updateBrand = async (req, res) => {
             brand_phone,
             brand_email,
             brand_password,
+            brand_person,
+            centers,
             brand_tax_id,
             brand_reg_no,
             companies,
@@ -210,6 +214,8 @@ export const updateBrand = async (req, res) => {
                 brand_phone = ?,
                 brand_email = ?,
                 brand_password = ?,
+                brand_person = ?,
+                centers = ?,
                 brand_tax_id = ?,
                 brand_reg_no = ?,
                 companies = ?,
@@ -222,6 +228,8 @@ export const updateBrand = async (req, res) => {
                 brand_phone,
                 brand_email,
                 brand_password,
+                brand_person,
+                centers,
                 brand_tax_id,
                 brand_reg_no,
                 companies,
@@ -309,6 +317,7 @@ export const getBrandBusinessCenters = async (req, res) => {
 
         const [businessCenters] = await conn.query(
             `SELECT bc.*, 
+                COUNT(DISTINCT bc.id) as total_centers,
                 COUNT(DISTINCT t.id) as total_companies,
                 COUNT(DISTINCT tm.id) as total_associates,
                 COUNT(DISTINCT r.id) as total_receptionists
@@ -424,7 +433,7 @@ export const getBrandLimits = async (req, res) => {
 
         // Get brand limits
         const [brand] = await conn.query(
-            'SELECT companies, associates, receptionist FROM brand WHERE id = ?',
+            'SELECT centers, companies, associates, receptionist FROM brand WHERE id = ?',
             [brand_id]
         );
 

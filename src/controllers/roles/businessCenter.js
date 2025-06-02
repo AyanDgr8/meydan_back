@@ -1,4 +1,4 @@
-// src/controllers/businessCenter.js
+// src/controllers/roles/businessCenter.js
 
 import connectDB from '../../db/index.js';
 
@@ -15,6 +15,7 @@ export const createBusiness = async (req, res) => {
             business_whatsapp,
             business_email,
             business_password,
+            business_person,
             business_address,
             business_country,
             business_tax_id,
@@ -32,12 +33,12 @@ export const createBusiness = async (req, res) => {
         const [result] = await conn.query(
             `INSERT INTO business_center (
                 business_name, business_phone, business_whatsapp, business_email,
-                business_password, business_address, business_country, business_tax_id, business_reg_no,
+                business_password, business_person, business_address, business_country, business_tax_id, business_reg_no,
                 other_detail, brand_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 business_name, business_phone, business_whatsapp, business_email,
-                business_password, business_address, business_country, business_tax_id, business_reg_no,
+                business_password, business_person, business_address, business_country, business_tax_id, business_reg_no,
                 other_detail, brand_id
             ]
         );
@@ -168,6 +169,7 @@ export const updateBusiness = async (req, res) => {
             business_whatsapp,
             business_email,
             business_password,
+            business_person,
             business_address,
             business_country,
             business_tax_id,
@@ -185,6 +187,7 @@ export const updateBusiness = async (req, res) => {
                 business_whatsapp = ?,
                 business_email = ?,
                 business_password = ?,
+                business_person = ?,
                 business_address = ?,
                 business_country = ?,
                 business_tax_id = ?,
@@ -198,6 +201,7 @@ export const updateBusiness = async (req, res) => {
                 business_whatsapp,
                 business_email,
                 business_password,
+                business_person,
                 business_address,
                 business_country,
                 business_tax_id,
