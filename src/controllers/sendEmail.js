@@ -7,15 +7,6 @@ import { logger } from '../logger.js';
 
 dotenv.config();
 
-// Create nodemailer transporter
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-    }
-});
-
 /**
  * Send email notification when a new customer is added
  * @param {Object} customerData - Customer information
@@ -23,44 +14,70 @@ const transporter = nodemailer.createTransport({
  * @returns {Promise} - Resolves when email is sent
  */
 export const sendCustomerNotification = async (customerData, teamEmail) => {
-    const {
-        customer_name,
-        phone_no_primary,
-        phone_no_secondary,
-        email_id,
-        address,
-        country,
-        designation,
-        QUEUE_NAME,
-        disposition,
-        comment,
-        C_unique_id
-    } = customerData;
-
-    // Format the email content with proper handling of undefined values
-    const emailContent = `
-        <h2 style="color: #1976d2">New Customer Query - ${customer_name || 'N/A'}</h2>
-        <p style="color: #364C63">Dear ${QUEUE_NAME || 'Team'},</p>
-        <p style="color: #364C63">We've received a query from a new customer that requires your attention. Below are the details collected:</p>
-        <h3 style="color: #EF6F53">Customer Information:</h3>
-        <ul>
-            <li>Name: ${customer_name || 'N/A'}</li>
-            <li>Phone: ${phone_no_primary || 'N/A'}</li>
-            <li>Alt Phone: ${phone_no_secondary || 'N/A'}</li>
-            <li>Email: ${email_id || 'N/A'}</li>
-            <li>Address: ${address || 'N/A'}</li>
-            <li>Country: ${country || 'N/A'}</li>
-            <li>Designation: ${designation || 'N/A'}</li>
-            <li>Message: ${comment || 'N/A'}</li>
-            <li>Disposition: ${disposition || 'N/A'}</li>
-            <li>Unique ID: ${C_unique_id || 'N/A'}</li>
-        </ul>
-        <p style="color: #364C63">Please take appropriate action based on the customer's requirements.<br>Best regards,<br>CRM System</p>
-    `;
-
+    let connection;
     try {
+        const pool = await connectDB();
+        connection = await pool.getConnection();
+
+        // Get business center credentials
+        const [businessCenter] = await connection.query(
+            `SELECT bc.business_email, bc.business_password 
+             FROM business_center bc
+             INNER JOIN teams t ON t.business_center_id = bc.id
+             WHERE t.team_email = ? AND bc.business_email IS NOT NULL`,
+            [teamEmail]
+        );
+
+        if (!businessCenter.length || !businessCenter[0].business_email || !businessCenter[0].business_password) {
+            throw new Error('Business center email credentials not found');
+        }
+
+        // Create transporter with business center credentials
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: businessCenter[0].business_email,
+                pass: businessCenter[0].business_password
+            }
+        });
+
+        const {
+            customer_name,
+            phone_no_primary,
+            phone_no_secondary,
+            email_id,
+            address,
+            country,
+            designation,
+            QUEUE_NAME,
+            disposition,
+            comment,
+            C_unique_id
+        } = customerData;
+
+        // Format the email content with proper handling of undefined values
+        const emailContent = `
+            <h2 style="color: #1976d2">New Customer Query - ${customer_name || 'N/A'}</h2>
+            <p style="color: #364C63">Dear ${QUEUE_NAME || 'Team'},</p>
+            <p style="color: #364C63">We've received a query from a new customer that requires your attention. Below are the details collected:</p>
+            <h3 style="color: #EF6F53">Customer Information:</h3>
+            <ul>
+                <li>Name: ${customer_name || 'N/A'}</li>
+                <li>Phone: ${phone_no_primary || 'N/A'}</li>
+                <li>Alt Phone: ${phone_no_secondary || 'N/A'}</li>
+                <li>Email: ${email_id || 'N/A'}</li>
+                <li>Address: ${address || 'N/A'}</li>
+                <li>Country: ${country || 'N/A'}</li>
+                <li>Designation: ${designation || 'N/A'}</li>
+                <li>Message: ${comment || 'N/A'}</li>
+                <li>Disposition: ${disposition || 'N/A'}</li>
+                <li>Unique ID: ${C_unique_id || 'N/A'}</li>
+            </ul>
+            <p style="color: #364C63">Please take appropriate action based on the customer's requirements.<br>Best regards,<br>CRM System</p>
+        `;
+
         await transporter.sendMail({
-            from: process.env.EMAIL_USER,
+            from: businessCenter[0].business_email,
             to: teamEmail,
             subject: `New Customer Query - ${customer_name || 'N/A'}`,
             html: emailContent
@@ -69,6 +86,10 @@ export const sendCustomerNotification = async (customerData, teamEmail) => {
     } catch (error) {
         logger.error('Error sending email notification:', error);
         throw error;
+    } finally {
+        if (connection) {
+            connection.release();
+        }
     }
 };
 

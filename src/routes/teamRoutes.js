@@ -5,6 +5,7 @@ import { createTeam, getAllTeams, getTeamByName } from '../controllers/teams.js'
 import { createUser, getAllUsers } from '../controllers/users.js';
 import { authenticateToken } from '../middlewares/auth.js';
 import connectDB from '../db/index.js';
+import XLSX from 'xlsx';
 
 const router = express.Router();
 
@@ -174,6 +175,72 @@ router.put('/:teamId', authenticateToken, async (req, res) => {
     }
 });
 
+// Download team and customer data
+router.get('/:teamId/download-all-data', authenticateToken, async (req, res) => {
+    let connection;
+    try {
+        const pool = await connectDB();
+        connection = await pool.getConnection();
+
+        const { teamId } = req.params;
+
+        // Get team members data
+        const [teamMembers] = await connection.query(
+            `SELECT 
+                username, department, email, mobile_num, 
+                mobile_num_2, designation, created_at
+             FROM team_members 
+             WHERE team_id = ?`,
+            [teamId]
+        );
+
+        // Get customers data
+        const [customers] = await connection.query(
+            `SELECT 
+                customer_name, phone_no_primary, phone_no_secondary,
+                email_id, address, country, designation, disposition,
+                comment, agent_name, date_created, last_updated,
+                C_unique_id, scheduled_at
+             FROM customers 
+             WHERE team_id = ?`,
+            [teamId]
+        );
+
+        // Create workbook
+        const wb = XLSX.utils.book_new();
+
+        // Convert team members to worksheet
+        const teamMembersWS = XLSX.utils.json_to_sheet(teamMembers);
+        XLSX.utils.book_append_sheet(wb, teamMembersWS, 'Team Members');
+
+        // Convert customers to worksheet
+        const customersWS = XLSX.utils.json_to_sheet(customers);
+        XLSX.utils.book_append_sheet(wb, customersWS, 'Customers');
+
+        // Generate Excel file
+        const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        // Set headers for file download
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=team_${teamId}_data.xlsx`);
+        
+        // Send file
+        res.send(excelBuffer);
+
+    } catch (err) {
+        console.error('Error downloading team data:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Error downloading team data',
+            error: err.message
+        });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+});
+
 // Delete team
 router.delete('/:teamId', authenticateToken, async (req, res) => {
     let connection;
@@ -186,9 +253,9 @@ router.delete('/:teamId', authenticateToken, async (req, res) => {
         // Start transaction
         await connection.beginTransaction();
 
-        // Check if team exists and get its details for verification
+        // Check if team exists and get team name
         const [team] = await connection.query(
-            'SELECT * FROM teams WHERE id = ?',
+            'SELECT team_name FROM teams WHERE id = ?',
             [teamId]
         );
 
@@ -200,19 +267,75 @@ router.delete('/:teamId', authenticateToken, async (req, res) => {
             });
         }
 
-        // Delete team
-        const [result] = await connection.query(
+        // Get team members data before deletion
+        const [teamMembers] = await connection.query(
+            `SELECT 
+                username, department, email, mobile_num, 
+                mobile_num_2, designation, created_at
+             FROM team_members 
+             WHERE team_id = ?`,
+            [teamId]
+        );
+
+        // Get customers data before deletion
+        const [customers] = await connection.query(
+            `SELECT 
+                id, customer_name, phone_no_primary, phone_no_secondary,
+                email_id, address, country, designation, disposition,
+                QUEUE_NAME, comment, date_created, C_unique_id,
+                last_updated, agent_name, scheduled_at
+             FROM customers 
+             WHERE team_id = ?`,
+            [teamId]
+        );
+
+        // Create workbook with the data
+        const wb = XLSX.utils.book_new();
+
+        // Convert team members to worksheet
+        const teamMembersWS = XLSX.utils.json_to_sheet(teamMembers);
+        XLSX.utils.book_append_sheet(wb, teamMembersWS, 'Team Members');
+
+        // Convert customers to worksheet
+        const customersWS = XLSX.utils.json_to_sheet(customers);
+        XLSX.utils.book_append_sheet(wb, customersWS, 'Customers');
+
+        // Generate Excel file
+        const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        // Delete in correct order due to composite foreign key constraints
+        // 1. First nullify the agent_name in customers to break the composite foreign key reference
+        await connection.query(
+            'UPDATE customers SET agent_name = NULL WHERE team_id = ?',
+            [teamId]
+        );
+
+        // 2. Delete all customers associated with this team
+        await connection.query(
+            'DELETE FROM customers WHERE team_id = ?',
+            [teamId]
+        );
+
+        // 3. Delete all team members
+        await connection.query(
+            'DELETE FROM team_members WHERE team_id = ?',
+            [teamId]
+        );
+
+        // 4. Finally delete the team itself
+        await connection.query(
             'DELETE FROM teams WHERE id = ?',
             [teamId]
         );
 
-        // Commit transaction
         await connection.commit();
 
-        res.json({
-            success: true,
-            message: 'Team deleted successfully'
-        });
+        // Set headers for file download
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=team_${team[0].team_name}_data.xlsx`);
+
+        // Send file
+        res.send(excelBuffer);
 
     } catch (err) {
         if (connection) {

@@ -208,6 +208,18 @@ export const updateBrand = async (req, res) => {
 
         await conn.beginTransaction();
 
+        // Get the current brand data to check if email is being changed
+        const [currentBrand] = await conn.query(
+            'SELECT brand_email FROM brand WHERE id = ?',
+            [req.params.id]
+        );
+
+        if (currentBrand.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Brand not found' });
+        }
+
+        // Update brand table
         const [result] = await conn.query(
             `UPDATE brand SET
                 brand_name = ?,
@@ -240,9 +252,12 @@ export const updateBrand = async (req, res) => {
             ]
         );
 
-        if (result.affectedRows === 0) {
-            await conn.rollback();
-            return res.status(404).json({ message: 'Brand not found' });
+        // If email has changed, update the associated user's email
+        if (brand_email && brand_email !== currentBrand[0].brand_email) {
+            await conn.query(
+                'UPDATE users SET email = ? WHERE brand_id = ? AND role_id = (SELECT id FROM roles WHERE role_name = "brand_user")',
+                [brand_email, req.params.id]
+            );
         }
 
         await conn.commit();
@@ -279,6 +294,13 @@ export const deleteBrand = async (req, res) => {
 
         await conn.beginTransaction();
 
+        // First delete associated users
+        const [deleteUsers] = await conn.query(
+            'DELETE FROM users WHERE brand_id = ?',
+            [req.params.id]
+        );
+
+        // Then delete the brand (this will cascade to business_centers and receptionists)
         const [result] = await conn.query(
             'DELETE FROM brand WHERE id = ?',
             [req.params.id]
@@ -291,7 +313,10 @@ export const deleteBrand = async (req, res) => {
 
         await conn.commit();
 
-        res.json({ message: 'Brand deleted successfully' });
+        res.json({ 
+            message: 'Brand and associated users deleted successfully',
+            deletedUsers: deleteUsers.affectedRows
+        });
 
     } catch (error) {
         if (conn) {

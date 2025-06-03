@@ -49,6 +49,67 @@ CREATE TABLE IF NOT EXISTS business_center (
     FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE
 );
 
+-- Create roles table
+CREATE TABLE IF NOT EXISTS roles (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    role_name ENUM('admin', 'brand_user', 'receptionist') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_role_name (role_name)
+);
+
+-- Insert default roles
+INSERT INTO roles (role_name) VALUES 
+    ('admin'),
+    ('brand_user'),
+    ('receptionist');
+
+-- Create users table
+CREATE TABLE IF NOT EXISTS users (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    role_id INT NOT NULL,
+    brand_id INT DEFAULT NULL,
+    business_center_id INT DEFAULT NULL,
+    is_active BOOLEAN DEFAULT true,
+    last_login TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (role_id) REFERENCES roles(id),
+    FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE SET NULL,
+    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE SET NULL
+);
+
+-- Create trigger to handle user creation from brand
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS after_brand_insert$$
+
+CREATE TRIGGER after_brand_insert
+AFTER INSERT ON brand
+FOR EACH ROW
+BEGIN
+    -- Create user account for brand user with hashed password
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        brand_id
+    )
+    SELECT 
+        NEW.brand_name,
+        NEW.brand_email,
+        NEW.brand_password, -- Password will be hashed in the controller
+        r.id,
+        NEW.id
+    FROM roles r
+    WHERE r.role_name = 'brand_user';
+END$$
+
+DELIMITER ;
+
 -- Create teams
 CREATE TABLE IF NOT EXISTS teams (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -398,67 +459,6 @@ DELIMITER ;
 -- ***************
 -- ***************
 
-
--- Create roles table
-CREATE TABLE IF NOT EXISTS roles (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    role_name ENUM('admin', 'brand_user', 'receptionist') NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY unique_role_name (role_name)
-);
-
--- Insert default roles
-INSERT INTO roles (role_name) VALUES 
-    ('admin'),
-    ('brand_user'),
-    ('receptionist');
-
--- Create users table
-CREATE TABLE IF NOT EXISTS users (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    username VARCHAR(50) NOT NULL UNIQUE,
-    email VARCHAR(100) NOT NULL UNIQUE,
-    password VARCHAR(255) NOT NULL,
-    role_id INT NOT NULL,
-    brand_id INT DEFAULT NULL,
-    business_center_id INT DEFAULT NULL,
-    is_active BOOLEAN DEFAULT true,
-    last_login TIMESTAMP NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (role_id) REFERENCES roles(id),
-    FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE SET NULL,
-    FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE SET NULL
-);
-
--- Create trigger to handle user creation from brand
-DELIMITER $$
-
-DROP TRIGGER IF EXISTS after_brand_insert$$
-
-CREATE TRIGGER after_brand_insert
-AFTER INSERT ON brand
-FOR EACH ROW
-BEGIN
-    -- Create user account for brand user with hashed password
-    INSERT INTO users (
-        username,
-        email,
-        password,
-        role_id,
-        brand_id
-    )
-    SELECT 
-        NEW.brand_name,
-        NEW.brand_email,
-        NEW.brand_password, -- Password will be hashed in the controller
-        r.id,
-        NEW.id
-    FROM roles r
-    WHERE r.role_name = 'brand_user';
-END$$
-
-DELIMITER ;
 
 -- Table List
 -- 1 admin

@@ -492,40 +492,41 @@ export const createBusinessTeams = async (req, res) => {
                 return res.status(400).json({ message: 'Team name is required for all teams' });
             }
 
+            // Convert spaces to underscores in team_name
+            const formattedTeamName = team_name.replace(/\s+/g, '_');
+
+            // Check if team already exists for this brand or business center
+            const [existingTeam] = await conn.query(
+                `SELECT id FROM teams 
+                 WHERE (team_name = ? AND brand_id = ?) 
+                 OR (team_name = ? AND business_center_id = ?)`,
+                [formattedTeamName, brand_id, formattedTeamName, businessId]
+            );
+
+            if (existingTeam.length > 0) {
+                await conn.rollback();
+                return res.status(400).json({
+                    message: `Team "${team_name}" already exists in this brand or business center`
+                });
+            }
+
+            // Create the team
             const [result] = await conn.query(
                 `INSERT INTO teams (
-                    team_name,
-                    tax_id,
-                    reg_no,
-                    team_phone,
-                    team_email,
-                    team_address,
-                    team_country,
-                    team_prompt,
-                    team_detail,
-                    business_center_id,
-                    brand_id,
-                    created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    team_name, tax_id, reg_no, team_phone, team_email,
+                    team_address, team_country, team_prompt, team_detail,
+                    team_type, created_by, brand_id, business_center_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    team_name,
-                    tax_id,
-                    reg_no,
-                    team_phone,
-                    team_email,
-                    team_address,
-                    team_country,
-                    team_prompt,
-                    team_detail,
-                    businessId,
-                    brand_id,
-                    userId
+                    formattedTeamName, tax_id, reg_no, team_phone, team_email,
+                    team_address, team_country, team_prompt, team_detail,
+                    'department', userId, brand_id, businessId
                 ]
             );
 
             createdTeams.push({
                 id: result.insertId,
-                team_name,
+                team_name: formattedTeamName,
                 tax_id,
                 reg_no,
                 team_phone,
@@ -567,7 +568,7 @@ export const createBusinessAssociate = async (req, res) => {
         const pool = connectDB();
         conn = await pool.getConnection();
         const businessId = req.params.id;
-        const { username, email, mobile_num, mobile_num_2, team_id, designation } = req.body;
+        const { username, email, mobile_num, mobile_num_2, team_id, department, designation } = req.body;
 
         // Start transaction
         await conn.beginTransaction();
@@ -623,10 +624,11 @@ export const createBusinessAssociate = async (req, res) => {
                     email,
                     mobile_num,
                     mobile_num_2,
+                    department,
                     designation,
                     team_id
-                ) VALUES (?, ?, ?, ?, ?, ?)`,
-                [username, email, mobile_num, mobile_num_2 || null, designation || null, team_id]
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [username, email, mobile_num, mobile_num_2, department, designation, team_id]
             );
 
             await conn.commit();
@@ -638,7 +640,8 @@ export const createBusinessAssociate = async (req, res) => {
                     username,
                     email,
                     mobile_num,
-                    mobile_num_2,
+                    mobile_num_2,   
+                    department,
                     designation,
                     team_id
                 }
