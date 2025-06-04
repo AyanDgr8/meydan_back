@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS brand (
     brand_phone VARCHAR(15),
     brand_email VARCHAR(100) UNIQUE,
     brand_password VARCHAR(255),
+    brand_email_password VARCHAR(255),
     brand_person VARCHAR(100),
     centers INT,
     companies INT,
@@ -57,11 +58,16 @@ CREATE TABLE IF NOT EXISTS roles (
     UNIQUE KEY unique_role_name (role_name)
 );
 
+
+
+
 -- Insert default roles
 INSERT INTO roles (role_name) VALUES 
     ('admin'),
     ('brand_user'),
+    ('business_admin'),
     ('receptionist');
+
 
 -- Create users table
 CREATE TABLE IF NOT EXISTS users (
@@ -80,6 +86,9 @@ CREATE TABLE IF NOT EXISTS users (
     FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE SET NULL,
     FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE SET NULL
 );
+
+
+
 
 -- Create trigger to handle user creation from brand
 DELIMITER $$
@@ -475,3 +484,77 @@ DELIMITER ;
 -- 12 teams
 -- 13 updates_customer
 -- 14 users
+
+
+-- 3rd June 2025
+
+ALTER TABLE roles 
+MODIFY COLUMN role_name ENUM('admin', 'brand_user', 'business_admin', 'receptionist') NOT NULL;
+ALTER TABLE login_history 
+MODIFY COLUMN entity_type ENUM('admin', 'brand_user', 'business_admin', 'receptionist') NOT NULL;
+INSERT INTO roles (role_name) VALUES 
+    ('business_admin');
+ALTER TABLE users DROP INDEX username;
+
+
+
+-- Create trigger for business_admin user creation
+
+DROP TRIGGER IF EXISTS after_business_center_insert;
+DELIMITER $$
+CREATE TRIGGER after_business_center_insert
+AFTER INSERT ON business_center
+FOR EACH ROW
+BEGIN
+    -- Create user account for business admin
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        business_center_id,
+        brand_id
+    )
+    SELECT 
+        NEW.business_person,
+        NEW.business_email,
+        '$2b$10$vB8FzjqZ.XmA1mJs4SANpeI2LK9GrORmUgU2Pgwb5oTRZTVkinhry', -- Hashed version of '12345678'
+        r.id,
+        NEW.id,
+        NEW.brand_id
+    FROM roles r
+    WHERE r.role_name = 'business_admin';
+END$$
+
+DELIMITER ;
+
+
+
+-- Create trigger to handle user creation from brand
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS after_brand_insert$$
+
+CREATE TRIGGER after_brand_insert
+AFTER INSERT ON brand
+FOR EACH ROW
+BEGIN
+    -- Create user account for brand user with hashed password
+    INSERT INTO users (
+        username,
+        email,
+        password,
+        role_id,
+        brand_id
+    )
+    SELECT 
+        NEW.brand_name,
+        NEW.brand_email,
+        '$2b$10$vB8FzjqZ.XmA1mJs4SANpeI2LK9GrORmUgU2Pgwb5oTRZTVkinhry', -- Hashed version of '12345678'
+        r.id,
+        NEW.id
+    FROM roles r
+    WHERE r.role_name = 'brand_user';
+END$$
+
+DELIMITER ;

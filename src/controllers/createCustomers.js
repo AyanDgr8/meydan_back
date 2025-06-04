@@ -415,10 +415,17 @@ export const createCustomer = async (req, res) => {
         } = req.body;
 
         console.log('Attempting to find team with name:', QUEUE_NAME);
-        // Keep spaces in team name to match database format
+        // Try both original format and underscore format, case-insensitive
+        const formattedQueueName = QUEUE_NAME.replace(/\s+/g, '_');
+        console.log('Also trying formatted name:', formattedQueueName);
+
+        // Get all teams first to debug
+        const [allTeams] = await connection.query('SELECT team_name FROM teams');
+        console.log('Available teams:', allTeams.map(t => t.team_name));
+
         const [teamResult] = await connection.query(
-            'SELECT id FROM teams WHERE team_name = ?',
-            [QUEUE_NAME]
+            'SELECT id FROM teams WHERE LOWER(team_name) = LOWER(?) OR LOWER(team_name) = LOWER(?)',
+            [QUEUE_NAME, formattedQueueName]
         );
         console.log('Team search result:', teamResult);
 

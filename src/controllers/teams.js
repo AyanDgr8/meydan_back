@@ -17,6 +17,26 @@ export const createTeam = async (req, res) => {
         try {
             await conn.beginTransaction();
 
+            // Check user permissions
+            if (req.user.role !== 'brand_user' && req.user.role !== 'business_admin') {
+                await conn.rollback();
+                return res.status(403).json({
+                    success: false,
+                    message: 'Insufficient permissions to create a team'
+                });
+            }
+
+            // For business_admin, verify they have access to the business center
+            if (req.user.role === 'business_admin') {
+                if (!business_center_id || business_center_id !== req.user.business_center_id) {
+                    await conn.rollback();
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Business admin can only create teams for their assigned business center'
+                    });
+                }
+            }
+
             // Get brand limits and current count
             const [brandLimits] = await conn.query(
                 'SELECT companies FROM brand WHERE id = ?',
@@ -170,153 +190,110 @@ export const createTeam = async (req, res) => {
 
 // Get all teams
 export const getAllTeams = async (req, res) => {
-    const pool = connectDB();
-    let connection;
+    let conn;
     try {
-        connection = await pool.getConnection();
-        const user = req.user;
-        
-        console.log('Getting all teams, user:', user);
+        const pool = connectDB();
+        conn = await pool.getConnection();
 
-        // If user role is not in req.user, try to get it from decoded token
-        const userRole = user.role || (req.decodedToken ? req.decodedToken.role : null);
-        console.log('User role:', userRole);
+        let query = `
+            SELECT t.*, 
+                   bc.business_name as business_center_name,
+                   b.brand_name
+            FROM teams t 
+            LEFT JOIN business_center bc ON t.business_center_id = bc.id
+            LEFT JOIN brand b ON t.brand_id = b.id
+            WHERE 1=1
+        `;
+        const params = [];
 
-        let query;
-        let params = [];
-
-        if (userRole === 'brand_user') {
-            // For brand users, get teams by brand_id
-            const brandId = req.decodedToken?.brand_id || user.brand_id;
-            console.log('Using brand_id for query:', brandId);
-            
-            query = `SELECT t.*, a.username as created_by_name 
-                    FROM teams t 
-                    LEFT JOIN admin a ON t.created_by = a.id 
-                    WHERE t.brand_id = ?
-                    ORDER BY t.created_at DESC`;
-            params = [brandId];
-        } else if (userRole === 'admin') {
-            // For admin users, get all teams
-            query = `SELECT t.*, a.username as created_by_name 
-                    FROM teams t 
-                    LEFT JOIN admin a ON t.created_by = a.id 
-                    ORDER BY t.created_at DESC`;
-        } else {
-            // For other users, get teams by business_center_id
-            const businessCenterId = user.business_center_id;
-            query = `SELECT t.*, a.username as created_by_name 
-                    FROM teams t 
-                    LEFT JOIN admin a ON t.created_by = a.id 
-                    WHERE t.business_center_id = ?
-                    ORDER BY t.created_at DESC`;
-            params = [businessCenterId];
+        // Filter based on user role
+        if (req.user.role === 'brand_user') {
+            query += ' AND t.brand_id = ?';
+            params.push(req.user.brand_id);
+        } else if (req.user.role === 'business_admin') {
+            query += ' AND t.business_center_id = ?';
+            params.push(req.user.business_center_id);
         }
 
-        // Execute the query
-        const [teams] = await connection.query(query, params);
-        console.log('Teams found:', teams);
+        const [teams] = await conn.query(query, params);
 
-        // Convert underscores back to spaces in team names
-        const formattedTeams = teams.map(team => ({
-            ...team,
-            team_name: team.team_name.replace(/_/g, ' ')
-        }));
-
-        res.json({ teams: formattedTeams });
+        res.json({
+            success: true,
+            teams
+        });
 
     } catch (error) {
-        console.error('Error fetching teams:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Error getting teams:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error getting teams',
+            error: error.message
+        });
     } finally {
-        if (connection) {
-            connection.release();
+        if (conn) {
+            conn.release();
         }
     }
 };
 
 // Get teams by business ID
 export const getTeamsByBusinessId = async (req, res) => {
-    const pool = connectDB();
-    let connection;
+    const businessId = req.params.businessId;
+    let conn;
+
     try {
-        connection = await pool.getConnection();
-        const businessId = req.params.businessId;
-        const user = req.user;
-        
-        console.log('Fetching teams for business ID:', businessId);
-        console.log('Full user object:', user);
+        const pool = connectDB();
+        conn = await pool.getConnection();
 
-        // If user role is not in req.user, try to get it from decoded token
-        const userRole = user.role || (req.decodedToken ? req.decodedToken.role : null);
-        console.log('User role:', userRole);
-
-        let query;
-        let params = [];
-
-        if (userRole === 'brand_user') {
-            // For brand users, get teams by brand_id and business_center_id
-            const brandId = req.decodedToken?.brand_id || user.brand_id;
-            console.log('Using brand_id for query:', brandId);
-            
-            query = `
-                SELECT t.*, 
-                       a.username as created_by_name,
-                       bc.business_name as business_center_name,
-                       bc.business_address as business_center_address,
-                       bc.business_phone as business_center_phone,
-                       bc.business_email as business_center_email
-                FROM teams t 
-                LEFT JOIN admin a ON t.created_by = a.id 
-                LEFT JOIN business_center bc ON t.business_center_id = bc.id
-                WHERE t.brand_id = ? AND t.business_center_id = ?
-                ORDER BY t.created_at DESC`;
-            params = [brandId, businessId];
-        } else if (userRole === 'admin') {
-            // For admin users, get teams for specific business center
-            query = `
-                SELECT t.*, 
-                       a.username as created_by_name,
-                       bc.business_name as business_center_name,
-                       bc.business_address as business_center_address,
-                       bc.business_phone as business_center_phone,
-                       bc.business_email as business_center_email
-                FROM teams t 
-                LEFT JOIN admin a ON t.created_by = a.id 
-                LEFT JOIN business_center bc ON t.business_center_id = bc.id
-                WHERE t.business_center_id = ?
-                ORDER BY t.created_at DESC`;
-            params = [businessId];
-        } else {
-            return res.status(403).json({ 
+        // Verify user has access to this business center
+        if (req.user.role === 'business_admin' && req.user.business_center_id !== parseInt(businessId)) {
+            return res.status(403).json({
                 success: false,
-                message: 'Unauthorized access' 
+                message: 'Access denied to this business center'
             });
         }
 
-        // Execute query first
-        const [teams] = await connection.query(query, params);
-        console.log('Teams after join:', teams);
+        // For brand_user, verify the business center belongs to their brand
+        if (req.user.role === 'brand_user') {
+            const [businessCenter] = await conn.query(
+                'SELECT id FROM business_center WHERE id = ? AND brand_id = ?',
+                [businessId, req.user.brand_id]
+            );
 
-        // Then format the results
-        const formattedTeams = teams.map(team => ({
-            ...team,
-            team_name: team.team_name.replace(/_/g, ' ')
-        }));
+            if (businessCenter.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied to this business center'
+                });
+            }
+        }
 
-        console.log('Formatted teams:', formattedTeams);
-        res.json({ teams: formattedTeams });
+        const [teams] = await conn.query(
+            `SELECT t.*, 
+                    bc.business_name as business_center_name,
+                    b.brand_name
+             FROM teams t 
+             LEFT JOIN business_center bc ON t.business_center_id = bc.id
+             LEFT JOIN brand b ON t.brand_id = b.id
+             WHERE t.business_center_id = ?`,
+            [businessId]
+        );
+
+        res.json({
+            success: true,
+            teams
+        });
 
     } catch (error) {
-        console.error('Error fetching teams:', error);
-        res.status(500).json({ 
+        console.error('Error getting teams:', error);
+        res.status(500).json({
             success: false,
-            message: 'Error fetching teams',
-            error: error.message 
+            message: 'Error getting teams',
+            error: error.message
         });
     } finally {
-        if (connection) {
-            connection.release();
+        if (conn) {
+            conn.release();
         }
     }
 };

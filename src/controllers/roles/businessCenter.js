@@ -1,8 +1,9 @@
 // src/controllers/roles/businessCenter.js
 
 import connectDB from '../../db/index.js';
+import nodemailer from 'nodemailer';
 
-// Create a new business
+// Create a new business center
 export const createBusiness = async (req, res) => {
     let conn;
     try {
@@ -24,43 +25,119 @@ export const createBusiness = async (req, res) => {
             brand_id
         } = req.body;
 
-        if (!business_name || !brand_id) {
-            return res.status(400).json({ message: 'Business name and brand ID are required' });
+        // Validate required fields
+        if (!business_name || !business_email || !business_person || !brand_id) {
+            return res.status(400).json({ message: 'Business name, email, person name and brand ID are required' });
+        }
+
+        // Get brand details for sending email
+        const [brand] = await conn.query(
+            'SELECT brand_name, brand_email, brand_password, centers as centers_limit FROM brand WHERE id = ?',
+            [brand_id]
+        );
+
+        if (!brand || brand.length === 0) {
+            return res.status(404).json({ message: 'Brand not found' });
+        }
+
+        if (!brand[0].brand_email) {
+            return res.status(400).json({ message: 'Brand email or password not configured' });
+        }
+
+        // Check brand limits
+        const [currentCount] = await conn.query(
+            'SELECT COUNT(*) as count FROM business_center WHERE brand_id = ?',
+            [brand_id]
+        );
+
+        if (currentCount[0].count >= brand[0].centers_limit) {
+            return res.status(400).json({ 
+                message: `Cannot create more business centers. Brand limit (${brand[0].centers_limit}) reached.` 
+            });
+        }
+
+        // Check if email already exists
+        const [existingBusiness] = await conn.query(
+            'SELECT id FROM business_center WHERE business_email = ?',
+            [business_email]
+        );
+
+        if (existingBusiness.length > 0) {
+            return res.status(400).json({ message: 'Email already exists' });
         }
 
         await conn.beginTransaction();
 
+        // Create business center (user will be created by trigger)
         const [result] = await conn.query(
             `INSERT INTO business_center (
                 business_name, business_phone, business_whatsapp, business_email,
-                business_password, business_person, business_address, business_country, business_tax_id, business_reg_no,
-                other_detail, brand_id
+                business_password, business_person, business_address, business_country,
+                business_tax_id, business_reg_no, other_detail, brand_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 business_name, business_phone, business_whatsapp, business_email,
-                business_password, business_person, business_address, business_country, business_tax_id, business_reg_no,
-                other_detail, brand_id
+                business_password, business_person, business_address, business_country,
+                business_tax_id, business_reg_no, other_detail, brand_id
             ]
         );
 
         await conn.commit();
-        
+
+        // Get the new business details
         const [newBusiness] = await conn.query(
             'SELECT * FROM business_center WHERE id = ?',
             [result.insertId]
         );
 
-        res.status(201).json({
-            message: 'Business created successfully',
-            business: newBusiness[0]
-        });
+        // Send welcome email using brand's email
+        try {
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: {
+                    user: brand[0].brand_email,
+                    pass: brand[0].brand_password
+                }
+            });
 
+            const mailOptions = {
+                from: `${brand[0].brand_name} <${brand[0].brand_email}>`,
+                to: business_email,
+                subject: `Welcome to ${brand[0].brand_name}`,
+                html: `
+                    <p>Dear ${business_person},</p>
+                    <p>Your business center account has been created in ${brand[0].brand_name}.</p>
+                    <p>Your login credentials:</p>
+                    <ul>
+                        <li>Username: ${business_email}</li>
+                        <li>Default password: 12345678</li>
+                    </ul>
+                    <a href="${process.env.FRONTEND_URL}login" style="display: inline-block; padding: 10px 20px; background-color: #1976d2; color: white; text-decoration: none; border-radius: 5px;">Login Now</a>
+                    <p>Please change your password after your first login for security purposes.</p>
+                    <p>Best regards,<br>Team ${brand[0].brand_name}</p>
+                `
+            };
+
+            await transporter.sendMail(mailOptions);
+            
+            res.status(201).json({
+                message: 'Business center created successfully and welcome email sent',
+                business: newBusiness[0]
+            });
+        } catch (emailError) {
+            console.error('Error sending welcome email:', emailError);
+            res.status(201).json({
+                message: 'Business center created successfully but welcome email could not be sent',
+                business: newBusiness[0],
+                emailError: true
+            });
+        }
     } catch (error) {
         if (conn) {
             await conn.rollback();
         }
         console.error('Error creating business:', error);
-        res.status(500).json({ message: 'Error creating business' });
+        res.status(500).json({ message: 'Error creating business', error: error.message });
     } finally {
         if (conn) {
             conn.release();
@@ -74,53 +151,33 @@ export const getAllBusinesses = async (req, res) => {
     try {
         const pool = connectDB();
         conn = await pool.getConnection();
+        const user = req.user;
 
-        // Get user info from authenticated user
-        const isAdmin = req.user.isAdmin || req.user.role === 'admin';
-        const brand_id = req.user.brand_id;
-
-        console.log('User requesting businesses:', {
-            isAdmin,
-            brand_id,
-            role: req.user.role,
-            userId: req.user.userId,
-            fullUser: req.user
-        });
-
-        // Modified query to include brand name
-        let query = `
-            SELECT bc.*, b.brand_name 
-            FROM business_center bc
-            LEFT JOIN brand b ON bc.brand_id = b.id
-        `;
+        let query = 'SELECT * FROM business_center';
         let params = [];
 
-        // Admin users can see all business centers
-        // Non-admin users only see their brand's business centers
-        if (!isAdmin && brand_id) {
-            query += ' WHERE bc.brand_id = ?';
-            params.push(brand_id);
+        // If user is business_admin, only show their assigned business center
+        if (user.role === 'business_admin') {
+            query += ' WHERE id = ?';
+            params.push(user.business_center_id);
+        } else if (!user.isAdmin && user.brand_id) {
+            // For brand users, only show businesses in their brand
+            query += ' WHERE brand_id = ?';
+            params.push(user.brand_id);
         }
 
-        query += ' ORDER BY bc.created_at DESC';
-        console.log('Executing query:', query, 'with params:', params);
+        query += ' ORDER BY created_at DESC';
 
         const [businesses] = await conn.query(query, params);
-        console.log(`Found ${businesses.length} businesses`);
 
         if (businesses.length === 0) {
-            console.log('No businesses found for query');
+            return res.status(404).json({ message: 'No business centers found' });
         }
 
         res.json(businesses);
-
     } catch (error) {
         console.error('Error fetching businesses:', error);
-        res.status(500).json({ 
-            message: 'Error fetching businesses',
-            error: error.message,
-            stack: error.stack
-        });
+        res.status(500).json({ message: 'Error fetching businesses' });
     } finally {
         if (conn) {
             conn.release();
@@ -180,6 +237,18 @@ export const updateBusiness = async (req, res) => {
 
         await conn.beginTransaction();
 
+        // First get the current business details to check if email is being changed
+        const [currentBusiness] = await conn.query(
+            'SELECT business_email FROM business_center WHERE id = ?',
+            [req.params.id]
+        );
+
+        if (currentBusiness.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Business not found' });
+        }
+
+        // Update business_center
         const [result] = await conn.query(
             `UPDATE business_center SET
                 business_name = ?,
@@ -212,6 +281,21 @@ export const updateBusiness = async (req, res) => {
             ]
         );
 
+        // If email has changed, update the corresponding user's email
+        if (business_email && business_email !== currentBusiness[0].business_email) {
+            const [updateUser] = await conn.query(
+                `UPDATE users u
+                 INNER JOIN roles r ON u.role_id = r.id
+                 SET u.email = ?
+                 WHERE u.business_center_id = ? AND r.role_name = 'business_admin'`,
+                [business_email, req.params.id]
+            );
+
+            if (updateUser.affectedRows === 0) {
+                console.warn(`No business_admin user found to update email for business center ${req.params.id}`);
+            }
+        }
+
         if (result.affectedRows === 0) {
             await conn.rollback();
             return res.status(404).json({ message: 'Business not found' });
@@ -234,7 +318,7 @@ export const updateBusiness = async (req, res) => {
             await conn.rollback();
         }
         console.error('Error updating business:', error);
-        res.status(500).json({ message: 'Error updating business' });
+        res.status(500).json({ message: 'Error updating business: ' + error.message });
     } finally {
         if (conn) {
             conn.release();
@@ -251,6 +335,13 @@ export const deleteBusiness = async (req, res) => {
 
         await conn.beginTransaction();
 
+        // First delete associated users
+        await conn.query(
+            'DELETE FROM users WHERE business_center_id = ?',
+            [req.params.id]
+        );
+
+        // Then delete the business center
         const [result] = await conn.query(
             'DELETE FROM business_center WHERE id = ?',
             [req.params.id]
@@ -263,7 +354,7 @@ export const deleteBusiness = async (req, res) => {
 
         await conn.commit();
 
-        res.json({ message: 'Business deleted successfully' });
+        res.json({ message: 'Business and associated users deleted successfully' });
 
     } catch (error) {
         if (conn) {
@@ -520,7 +611,7 @@ export const createBusinessTeams = async (req, res) => {
                 [
                     formattedTeamName, tax_id, reg_no, team_phone, team_email,
                     team_address, team_country, team_prompt, team_detail,
-                    'department', userId, brand_id, businessId
+                    'company', userId, brand_id, businessId
                 ]
             );
 

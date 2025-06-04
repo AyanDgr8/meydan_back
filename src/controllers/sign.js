@@ -333,7 +333,7 @@ export const forgotPassword = async (req, res) => {
         );
 
         // Create reset URL with token
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+        const resetUrl = `${process.env.FRONTEND_URL}reset-password/${resetToken}`;
 
         // Send email
         const mailOptions = {
@@ -433,7 +433,7 @@ export const sendOTP = async (req, res) => {
         );
 
         // Create reset URL with token
-        const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+        const resetLink = `${process.env.FRONTEND_URL}reset-password/${resetToken}`;
 
         // Email content
         const mailOptions = {

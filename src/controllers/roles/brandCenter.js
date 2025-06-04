@@ -26,26 +26,35 @@ export const createBrand = async (req, res) => {
             brand_name,
             brand_phone,
             brand_email,
-            brand_tax_id,
-            brand_reg_no,
+            brand_password,
             brand_person,
             centers,
             companies,
             associates,
             receptionist,
+            brand_tax_id,
+            brand_reg_no,
             brand_other_detail
         } = req.body;
 
-        if (!brand_name) {
-            return res.status(400).json({ message: 'Brand name is required' });
+        // Validate required fields
+        if (!brand_name || !brand_email || !brand_password) {
+            return res.status(400).json({ message: 'Brand name, email and password are required' });
+        }
+
+        // Check if email already exists
+        const [existingBrand] = await conn.query(
+            'SELECT id FROM brand WHERE brand_email = ?',
+            [brand_email]
+        );
+
+        if (existingBrand.length > 0) {
+            return res.status(400).json({ message: 'Email already exists' });
         }
 
         await conn.beginTransaction();
 
-        // Create default password hash
-        const defaultPassword = '12345678';
-        const hashedPassword = await bcrypt.hash(defaultPassword, SALT_ROUNDS);
-
+        // Insert brand with unhashed password
         const [result] = await conn.query(
             `INSERT INTO brand (
                 brand_name, brand_phone, brand_email, brand_password, brand_person, centers, 
@@ -53,7 +62,7 @@ export const createBrand = async (req, res) => {
                 brand_other_detail
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                brand_name, brand_phone, brand_email, hashedPassword, brand_person, centers, 
+                brand_name, brand_phone, brand_email, brand_password, brand_person, centers, 
                 brand_tax_id, brand_reg_no, companies, associates, receptionist, brand_other_detail
             ]
         );
@@ -75,7 +84,7 @@ export const createBrand = async (req, res) => {
                 <p>Your account has been created successfully.</p>
                 <p>You can now login to your account using your email and the default password: <strong>12345678</strong></p>
                 <p>Please change your password after your first login.</p>
-                <a href="${process.env.FRONTEND_URL}/login" style="display: inline-block; padding: 10px 20px; background-color: #1976d2; color: white; text-decoration: none; border-radius: 5px;">Login Now</a>
+                <a href="${process.env.FRONTEND_URL}login" style="display: inline-block; padding: 10px 20px; background-color: #1976d2; color: white; text-decoration: none; border-radius: 5px;">Login Now</a>
                 <p>Best regards,<br>Team Multycomm</p>
             `
         };
@@ -294,13 +303,28 @@ export const deleteBrand = async (req, res) => {
 
         await conn.beginTransaction();
 
-        // First delete associated users
+        // First delete customers associated with teams in this brand's business centers
+        const [deleteCustomers] = await conn.query(
+            `DELETE c FROM customers c 
+             INNER JOIN teams t ON c.team_id = t.id 
+             INNER JOIN business_center bc ON t.business_center_id = bc.id 
+             WHERE bc.brand_id = ?`,
+            [req.params.id]
+        );
+
+        // Then delete teams associated with the brand's business centers
+        const [deleteTeams] = await conn.query(
+            'DELETE t FROM teams t INNER JOIN business_center bc ON t.business_center_id = bc.id WHERE bc.brand_id = ?',
+            [req.params.id]
+        );
+
+        // Then delete associated users
         const [deleteUsers] = await conn.query(
             'DELETE FROM users WHERE brand_id = ?',
             [req.params.id]
         );
 
-        // Then delete the brand (this will cascade to business_centers and receptionists)
+        // Finally delete the brand (this will cascade to business_centers and receptionists)
         const [result] = await conn.query(
             'DELETE FROM brand WHERE id = ?',
             [req.params.id]
@@ -314,7 +338,9 @@ export const deleteBrand = async (req, res) => {
         await conn.commit();
 
         res.json({ 
-            message: 'Brand and associated users deleted successfully',
+            message: 'Brand and associated data deleted successfully',
+            deletedCustomers: deleteCustomers.affectedRows,
+            deletedTeams: deleteTeams.affectedRows,
             deletedUsers: deleteUsers.affectedRows
         });
 
@@ -323,7 +349,7 @@ export const deleteBrand = async (req, res) => {
             await conn.rollback();
         }
         console.error('Error deleting brand:', error);
-        res.status(500).json({ message: 'Error deleting brand' });
+        res.status(500).json({ message: 'Error deleting brand: ' + error.message });
     } finally {
         if (conn) {
             conn.release();

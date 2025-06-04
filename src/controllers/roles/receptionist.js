@@ -109,9 +109,10 @@ export const createReceptionist = async (req, res) => {
                         <p>Your account has been created as a receptionist in the ${businessCenter[0].business_name}.</p>
                         <p>Your login credentials:</p>
                         <ul>
-                            <li>Username: ${receptionist_name}</li>
+                            <li>Username: ${receptionist_email}</li>
                             <li>Default password: 12345678</li>
                         </ul>
+                        <a href="${process.env.FRONTEND_URL}login" style="display: inline-block; padding: 10px 20px; background-color: #1976d2; color: white; text-decoration: none; border-radius: 5px;">Login Now</a>
                         <p>Please change your password after your first login for security purposes.</p>
                         <p>Best regards,<br>Team ${businessCenter[0].business_name} </p>
                     `
@@ -150,13 +151,37 @@ export const getAllReceptionists = async (req, res) => {
         const pool = connectDB();
         conn = await pool.getConnection();
 
-        const [receptionists] = await conn.query(
-            `SELECT r.*, bc.business_name 
-             FROM receptionist r
-             LEFT JOIN business_center bc ON r.business_center_id = bc.id
-             ORDER BY r.created_at DESC`
-        );
+        // Get user role from the request
+        const userRole = req.user.role;
+        const businessCenterId = req.user.business_center_id;
+        const brandId = req.user.brand_id;
 
+        let query = `
+            SELECT r.*, bc.business_name 
+            FROM receptionist r
+            LEFT JOIN business_center bc ON r.business_center_id = bc.id
+        `;
+
+        let params = [];
+
+        // Filter based on role
+        if (userRole === 'business_admin' && businessCenterId) {
+            // Business admin can only see receptionists from their business center
+            query += ' WHERE bc.id = ?';
+            params.push(businessCenterId);
+        } else if ((userRole === 'brand_admin' || userRole === 'brand_user') && brandId) {
+            // Brand admin and brand users can see all receptionists from their brand's business centers
+            query += ' WHERE bc.brand_id = ?';
+            params.push(brandId);
+        } else if (userRole !== 'admin') {
+            // If not an admin and no valid business_center_id or brand_id, return empty list
+            return res.json([]);
+        }
+        // System admin can see all receptionists (no additional WHERE clause)
+
+        query += ' ORDER BY r.created_at DESC';
+
+        const [receptionists] = await conn.query(query, params);
         res.json(receptionists);
 
     } catch (error) {
@@ -230,6 +255,16 @@ export const updateReceptionist = async (req, res) => {
             return res.status(404).json({ message: 'Business center not found' });
         }
 
+        // Get current receptionist details to check if email is being changed
+        const [currentReceptionist] = await conn.query(
+            'SELECT receptionist_email FROM receptionist WHERE id = ?',
+            [req.params.id]
+        );
+
+        if (currentReceptionist.length === 0) {
+            return res.status(404).json({ message: 'Receptionist not found' });
+        }
+
         await conn.beginTransaction();
 
         const [result] = await conn.query(
@@ -247,8 +282,23 @@ export const updateReceptionist = async (req, res) => {
                 business_center_id,
                 rec_other_detail,
                 req.params.id
-            ]   
+            ]
         );
+
+        // If email has changed, update the corresponding user's email
+        if (receptionist_email && receptionist_email !== currentReceptionist[0].receptionist_email) {
+            const [updateUser] = await conn.query(
+                `UPDATE users u
+                 INNER JOIN roles r ON u.role_id = r.id
+                 SET u.email = ?
+                 WHERE u.business_center_id = ? AND r.role_name = 'receptionist' AND u.username = ?`,
+                [receptionist_email, business_center_id, receptionist_name]
+            );
+
+            if (updateUser.affectedRows === 0) {
+                console.warn(`No receptionist user found to update email for receptionist ${receptionist_name}`);
+            }
+        }
 
         if (result.affectedRows === 0) {
             await conn.rollback();
@@ -258,10 +308,7 @@ export const updateReceptionist = async (req, res) => {
         await conn.commit();
 
         const [updatedReceptionist] = await conn.query(
-            `SELECT r.*, bc.business_name 
-             FROM receptionist r
-             LEFT JOIN business_center bc ON r.business_center_id = bc.id
-             WHERE r.id = ?`,
+            'SELECT * FROM receptionist WHERE id = ?',
             [req.params.id]
         );
 
@@ -275,7 +322,7 @@ export const updateReceptionist = async (req, res) => {
             await conn.rollback();
         }
         console.error('Error updating receptionist:', error);
-        res.status(500).json({ message: 'Error updating receptionist' });
+        res.status(500).json({ message: 'Error updating receptionist: ' + error.message });
     } finally {
         if (conn) {
             conn.release();
