@@ -99,6 +99,9 @@ const router = express.Router();
 // Mount team routes
 router.use('/team', teamRoutes);
 
+// Add a new route to get all teams
+router.get('/teams', authenticateToken, getAllTeams);
+
 // Route for user login
 router.post('/login', loginAdmin);
 

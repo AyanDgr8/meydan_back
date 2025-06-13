@@ -174,32 +174,35 @@ CREATE TABLE `login_history` (
     KEY `entity_type_id` (`entity_type`, `entity_id`)
 );
 
--- Create customers
+-- Create customers table with proper constraints
 CREATE TABLE `customers` (
     `id` int NOT NULL AUTO_INCREMENT,
     `customer_name` varchar(100) DEFAULT NULL,
     `phone_no_primary` varchar(15) DEFAULT NULL,
     `phone_no_secondary` varchar(15) DEFAULT NULL,
     `email_id` varchar(100) DEFAULT NULL,
-    `address` text DEFAULT NULL,
+    `address` text,
     `country` varchar(15) DEFAULT NULL,
     `designation` varchar(50) DEFAULT NULL,
     `disposition` varchar(50) DEFAULT 'interested',
     `QUEUE_NAME` varchar(50) DEFAULT NULL,
-    `comment` text DEFAULT NULL,
+    `comment` text,
     `date_created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     `C_unique_id` varchar(50) DEFAULT NULL,
     `last_updated` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `team_id` INT NOT NULL,
-    `agent_name` varchar(50) DEFAULT NULL,
+    `team_id` int NOT NULL,
+    `agent_name` varchar(50) NOT NULL,
     `scheduled_at` datetime DEFAULT NULL,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `unique_team_customer_id` (`team_id`, `C_unique_id`),
-    KEY `agent_name_team` (`agent_name`, `team_id`),
-    CONSTRAINT `customers_team_fk` FOREIGN KEY (`team_id`) REFERENCES `teams` (`id`),
+    UNIQUE KEY `unique_team_customer_id` (`team_id`,`C_unique_id`),
+    KEY `agent_name_team` (`agent_name`,`team_id`),
     CONSTRAINT `customers_agent_fk` FOREIGN KEY (`agent_name`, `team_id`) 
-        REFERENCES `team_members` (`username`, `team_id`) ON UPDATE CASCADE
-);
+        REFERENCES `team_members` (`username`, `team_id`),
+    CONSTRAINT `customers_team_fk` FOREIGN KEY (`team_id`) REFERENCES `teams` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Add a default value for agent_name for existing records
+UPDATE customers SET agent_name = 'Unknown' WHERE agent_name IS NULL;
 
 -- Create customer_field_values table
 CREATE TABLE IF NOT EXISTS customer_field_values (
@@ -296,87 +299,13 @@ CREATE TABLE `scheduler` (
     CONSTRAINT `scheduler_assigned_fk` FOREIGN KEY (`assigned_to`, `team_id`) 
         REFERENCES `team_members` (`username`, `team_id`) ON UPDATE CASCADE
 );
-
--- Migrate existing reminders from customers table to scheduler
-INSERT INTO scheduler (customer_id, scheduled_at, created_by, assigned_to, team_id)
-SELECT 
-    c.id as customer_id,
-    c.scheduled_at,
-    tm.id as created_by,
-    tm.username as assigned_to,
-    c.team_id
-FROM customers c
-JOIN team_members tm ON tm.username = c.agent_name AND tm.team_id = c.team_id
-WHERE c.scheduled_at IS NOT NULL;
-
--- *************
-
-DELIMITER //
-
-DROP TRIGGER IF EXISTS after_customers_scheduled_at_update//
-
-CREATE TRIGGER after_customers_scheduled_at_update 
-AFTER UPDATE ON customers 
-FOR EACH ROW 
-BEGIN
-    DECLARE agent_id INT;
-    DECLARE existing_id INT;
-    
-    -- Only create scheduler entry if scheduled_at is changed to a non-null value
-    IF NEW.scheduled_at IS NOT NULL AND 
-       (OLD.scheduled_at IS NULL OR NEW.scheduled_at <> OLD.scheduled_at) THEN 
-        
-        -- Try to find the user ID for the agent_name
-        -- This ensures we have a valid user ID for the created_by field
-        SELECT id INTO agent_id FROM team_members WHERE username = NEW.agent_name LIMIT 1;
-        
-        -- If we can't find the agent, use the first admin user as a fallback
-        IF agent_id IS NULL THEN
-            SELECT id INTO agent_id FROM team_members LIMIT 1; 
-        END IF;
-        
-        -- Check if there's an existing pending scheduler entry for this customer
-        SELECT id INTO existing_id FROM scheduler 
-        WHERE customer_id = NEW.id AND status = 'pending' LIMIT 1;
-        
-        IF existing_id IS NOT NULL THEN
-            -- Update existing scheduler entry
-            UPDATE scheduler SET
-                scheduled_at = NEW.scheduled_at,
-                updated_at = NOW()
-            WHERE id = existing_id;
-        ELSE
-            -- Create new scheduler entry
-            INSERT INTO scheduler (
-                customer_id,
-                scheduled_at,
-                created_by,
-                assigned_to,
-                team_id,
-                description,
-                status
-            ) VALUES (
-                NEW.id,
-                NEW.scheduled_at,
-                agent_id,           -- Use the agent's ID or admin ID as fallback
-                NEW.agent_name,     -- The agent to whom it is assigned
-                NEW.team_id,
-                CONCAT('Scheduled call with ', NEW.customer_name),
-                'pending'
-            );
-        END IF;
-    END IF;
-END//
-
-DELIMITER ;
-
 -- ********************
 -- ********************
 -- ********************
 -- 27th ,may 2025
 -- ********************
 -- ********************
--- ********************
+-- **********************
 
 
 
@@ -556,5 +485,331 @@ BEGIN
     FROM roles r
     WHERE r.role_name = 'brand_user';
 END$$
+
+DELIMITER ;
+
+
+
+-- **********************
+-- Trip
+-- **********************
+
+-- **********************
+-- **********************
+-- ********************
+-- 27th ,may 2025
+-- ********************
+-- ********************
+-- **********************
+
+
+-- First drop existing triggers
+DROP TRIGGER IF EXISTS after_customers_scheduled_at_update;
+
+DELIMITER //
+DROP TRIGGER IF EXISTS after_customers_scheduled_at_insert;
+-- Create insert trigger
+CREATE TRIGGER after_customers_scheduled_at_insert
+AFTER INSERT ON customers 
+FOR EACH ROW 
+BEGIN
+    DECLARE agent_id INT;
+    
+    IF NEW.scheduled_at IS NOT NULL THEN
+        -- Get the team_member id
+        SELECT id INTO agent_id 
+        FROM team_members 
+        WHERE username = NEW.agent_name 
+        AND team_id = NEW.team_id 
+        LIMIT 1;
+        
+        -- Insert into scheduler
+        INSERT INTO scheduler (
+            customer_id,
+            C_unique_id,
+            scheduled_at,
+            status,
+            created_by,
+            team_id,
+            notes
+        ) VALUES (
+            NEW.id,
+            NEW.C_unique_id,
+            NEW.scheduled_at,
+            'pending',
+            NEW.agent_name,
+            NEW.team_id,
+            NEW.comment
+        );
+    END IF;
+END
+//
+
+DELIMITER ;
+
+-- Create update trigger
+CREATE TRIGGER after_customers_scheduled_at_update 
+AFTER UPDATE ON customers 
+FOR EACH ROW 
+BEGIN
+    DECLARE agent_id INT;
+    
+    IF NEW.scheduled_at IS NOT NULL AND 
+       (OLD.scheduled_at IS NULL OR NEW.scheduled_at != OLD.scheduled_at) THEN
+        
+        -- Get the team_member id
+        SELECT id INTO agent_id 
+        FROM team_members 
+        WHERE username = NEW.agent_name 
+        AND team_id = NEW.team_id 
+        LIMIT 1;
+        
+        -- Insert or update scheduler
+        INSERT INTO scheduler (
+            customer_id,
+            scheduled_at,
+            created_by,
+            assigned_to,
+            team_id,
+            description,
+            status
+        ) VALUES (
+            NEW.id,
+            NEW.scheduled_at,
+            agent_id,
+            NEW.agent_name,
+            NEW.team_id,
+            NEW.comment,
+            'pending'
+        )
+        ON DUPLICATE KEY UPDATE
+            scheduled_at = NEW.scheduled_at,
+            description = NEW.comment,
+            updated_at = CURRENT_TIMESTAMP;
+    END IF;
+END//
+
+DELIMITER ;
+
+-- Now migrate existing data
+INSERT INTO scheduler (
+    customer_id,
+    scheduled_at,
+    created_by,
+    assigned_to,
+    team_id,
+    description,
+    status
+)
+SELECT 
+    c.id,
+    c.scheduled_at,
+    tm.id,
+    c.agent_name,
+    c.team_id,
+    c.comment,
+    'pending'
+FROM customers c
+INNER JOIN team_members tm ON tm.username = c.agent_name AND tm.team_id = c.team_id
+WHERE c.scheduled_at IS NOT NULL
+ON DUPLICATE KEY UPDATE
+    scheduled_at = VALUES(scheduled_at),
+    description = VALUES(description),
+    updated_at = CURRENT_TIMESTAMP;
+
+-- Drop and recreate created_by column
+ALTER TABLE customers DROP COLUMN created_by;
+
+ALTER TABLE customers ADD COLUMN created_by VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Unknown';
+
+-- Update any existing rows
+UPDATE customers SET created_by = 'Unknown' WHERE created_by IS NULL;
+
+
+-- Drop the created_by column from customers table
+ALTER TABLE customers DROP COLUMN created_by;
+
+
+
+
+
+
+DROP TRIGGER IF EXISTS after_customer_insert;
+DROP TRIGGER IF EXISTS after_customer_update;
+
+-- Update the after_customer_insert trigger to use agent_name
+DELIMITER //
+CREATE TRIGGER after_customer_insert
+AFTER INSERT ON customers
+FOR EACH ROW
+BEGIN
+    INSERT INTO updates_customer (
+        customer_id,
+        C_unique_id,
+        field,
+        old_value,
+        new_value,
+        changed_at,
+        phone_no_primary,
+        changed_by
+    ) VALUES (
+        NEW.id,
+        NEW.C_unique_id,
+        'created',
+        NULL,
+        'New customer created',
+        NOW(),
+        NEW.phone_no_primary,
+        NEW.agent_name
+    );
+END//
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER after_customer_update
+AFTER UPDATE ON customers
+FOR EACH ROW
+BEGIN
+    INSERT INTO updates_customer (
+        customer_id,
+        C_unique_id,
+        field,
+        old_value,
+        new_value,
+        changed_at,
+        phone_no_primary,
+        changed_by
+    ) VALUES (
+        NEW.id,
+        NEW.C_unique_id,
+        'updated',
+        NULL,
+        'Customer updated',
+        NOW(),
+        NEW.phone_no_primary,
+        NEW.agent_name
+    );
+END//
+DELIMITER ;
+
+
+
+
+-- *****************
+-- *****************
+-- *****************
+-- *****************
+
+drop table scheduler;
+drop table updates_customer;
+drop table customers;
+
+-- 1. Create customers table
+CREATE TABLE `customers` (
+    `id` int NOT NULL AUTO_INCREMENT,
+    `customer_name` varchar(100) DEFAULT NULL,
+    `phone_no_primary` varchar(15) DEFAULT NULL,
+    `phone_no_secondary` varchar(15) DEFAULT NULL,
+    `email_id` varchar(100) DEFAULT NULL,
+    `address` text,
+    `country` varchar(15) DEFAULT NULL,
+    `designation` varchar(50) DEFAULT NULL,
+    `disposition` varchar(50) DEFAULT 'interested',
+    `QUEUE_NAME` varchar(50) DEFAULT NULL,
+    `comment` text,
+    `date_created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `C_unique_id` varchar(50) DEFAULT NULL,
+    `last_updated` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `team_id` int NOT NULL,
+    `agent_name` varchar(50) NOT NULL,
+    `scheduled_at` datetime DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `unique_team_customer_id` (`team_id`,`C_unique_id`),
+    KEY `agent_name_team` (`agent_name`,`team_id`),
+    CONSTRAINT `customers_team_fk` FOREIGN KEY (`team_id`) REFERENCES `teams` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- 2. Create updates_customer table
+CREATE TABLE `updates_customer` (
+    `id` int NOT NULL AUTO_INCREMENT,
+    `customer_id` int NOT NULL,
+    `C_unique_id` varchar(50) NOT NULL,
+    `field` varchar(255) NOT NULL,
+    `old_value` text,
+    `new_value` text,
+    `updated_by` varchar(50) NOT NULL,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `team_id` int NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `customer_id_idx` (`customer_id`),
+    KEY `C_unique_id_idx` (`C_unique_id`),
+    KEY `team_id_idx` (`team_id`),
+    CONSTRAINT `updates_customer_customer_fk` FOREIGN KEY (`customer_id`) 
+        REFERENCES `customers` (`id`),
+    CONSTRAINT `updates_customer_team_fk` FOREIGN KEY (`team_id`) 
+        REFERENCES `teams` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- 3. Create scheduler table
+CREATE TABLE `scheduler` (
+    `id` int NOT NULL AUTO_INCREMENT,
+    `customer_id` int NOT NULL,
+    `C_unique_id` varchar(50) NOT NULL,
+    `scheduled_at` datetime NOT NULL,
+    `status` enum('pending','completed','cancelled') DEFAULT 'pending',
+    `created_by` varchar(50) NOT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `team_id` int NOT NULL,
+    `notes` text,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `unique_customer_schedule` (`customer_id`, `scheduled_at`),
+    KEY `C_unique_id_idx` (`C_unique_id`),
+    KEY `team_id_idx` (`team_id`),
+    CONSTRAINT `scheduler_customer_fk` FOREIGN KEY (`customer_id`) 
+        REFERENCES `customers` (`id`),
+    CONSTRAINT `scheduler_team_fk` FOREIGN KEY (`team_id`) 
+        REFERENCES `teams` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+
+DROP TRIGGER IF EXISTS after_customers_scheduled_at_insert;
+DELIMITER //
+
+CREATE TRIGGER after_customers_scheduled_at_insert
+AFTER INSERT ON customers 
+FOR EACH ROW 
+BEGIN
+    DECLARE agent_id INT;
+    
+    IF NEW.scheduled_at IS NOT NULL THEN
+        -- Get the team_member id
+        SELECT id INTO agent_id 
+        FROM team_members 
+        WHERE username = NEW.agent_name 
+        AND team_id = NEW.team_id 
+        LIMIT 1;
+        
+        -- Insert into scheduler
+        INSERT INTO scheduler (
+            customer_id,
+            C_unique_id,
+            scheduled_at,
+            status,
+            created_by,
+            team_id,
+            notes
+        ) VALUES (
+            NEW.id,
+            NEW.C_unique_id,
+            NEW.scheduled_at,
+            'pending',
+            NEW.agent_name,
+            NEW.team_id,
+            NEW.comment
+        );
+    END IF;
+END
+//
 
 DELIMITER ;

@@ -397,26 +397,69 @@ export const checkExistingCustomer = async (req, res) => {
     }
 };
 
+// This preserves local time as entered (no UTC shift)
+const formatDate = (dateStr) => {
+    if (!dateStr) return null;
+
+    // Expecting "YYYY-MM-DD HH:mm:ss"
+    const parts = dateStr.split(/[- :T]/);
+    if (parts.length < 5) return null;
+
+    const [year, month, day, hour, minute, second = '00'] = parts;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`;
+};
+
 export const createCustomer = async (req, res) => {
     const pool = await connectDB();
     let connection;
     try {
-        if (!req.user) {
-            return res.status(401).json({ message: 'Authentication required' });
+        if (!req.user || !req.user.username) {
+            return res.status(400).json({ message: 'User information is incomplete' });
         }
 
-        connection = await pool.getConnection();
-        await connection.beginTransaction();
+        const username = String(req.user.username).trim();
+        if (!username) {
+            return res.status(400).json({ message: 'Username cannot be empty' });
+        }
 
+        console.log('Creating customer with username:', username);
+
+        connection = await pool.getConnection();
+        // Start transaction explicitly
+        await connection.beginTransaction();
+        
+        // First check if this is a valid user
+        const [userResult] = await connection.query(
+            'SELECT u.id, u.username, u.role_id, r.role_name FROM users u ' +
+            'JOIN roles r ON u.role_id = r.id ' +
+            'WHERE u.username = ?',
+            [username]
+        );
+
+        if (!userResult || userResult.length === 0) {
+            await connection.rollback();
+            return res.status(400).json({ message: 'Invalid user - not found in users table' });
+        }
+
+        // Get the receptionist info based on the authenticated user
+        const [receptionists] = await connection.query(
+            'SELECT id, receptionist_name, receptionist_email FROM receptionist ' +
+            'WHERE receptionist_name = ?',
+            [req.user.username]
+        );
+
+        // Get team_id and agent_name
         const { 
             customer_name, phone_no_primary, phone_no_secondary, 
             email_id, address, country, disposition, designation,
-            QUEUE_NAME, comment, scheduled_at 
+            QUEUE_NAME, comment, scheduled_at
         } = req.body;
+
+        console.log('Creating customer with username:', username);
 
         console.log('Attempting to find team with name:', QUEUE_NAME);
         // Try both original format and underscore format, case-insensitive
-        const formattedQueueName = QUEUE_NAME.replace(/\s+/g, '_');
+        const formattedQueueName = QUEUE_NAME.replace(/_/g, ' ');
         console.log('Also trying formatted name:', formattedQueueName);
 
         // Get all teams first to debug
@@ -424,8 +467,8 @@ export const createCustomer = async (req, res) => {
         console.log('Available teams:', allTeams.map(t => t.team_name));
 
         const [teamResult] = await connection.query(
-            'SELECT id FROM teams WHERE LOWER(team_name) = LOWER(?) OR LOWER(team_name) = LOWER(?)',
-            [QUEUE_NAME, formattedQueueName]
+            'SELECT id FROM teams WHERE LOWER(team_name) = LOWER(?) OR LOWER(REPLACE(team_name, " ", "_")) = LOWER(?)',
+            [QUEUE_NAME, QUEUE_NAME]
         );
         console.log('Team search result:', teamResult);
 
@@ -436,19 +479,29 @@ export const createCustomer = async (req, res) => {
         const team_id = teamResult[0].id;
 
         // Check if the user is a member of this team
-        const [teamMember] = await connection.query(
+        const [teamMemberCheck] = await connection.query(
             'SELECT username FROM team_members WHERE username = ? AND team_id = ?',
             [req.user.username, team_id]
         );
-        console.log('Team member check:', teamMember);
+        console.log('Team member check:', teamMemberCheck);
         console.log('User role:', req.user.role);
 
-        // All users (admin, brand_user, receptionist) can create records
-        // Only set agent_name if the user is a team member
-        const agent_name = teamMember.length > 0 ? req.user.username : null;
+        // Set agent_name based on team membership
+        let agent_name = null;
+        if (teamMemberCheck.length > 0) {
+            agent_name = req.user.username;
+        } else if (req.user.role === 'receptionist') {
+            agent_name = req.user.username;
+        } else {
+            throw new Error('User is not authorized to create customer in this team');
+        }
 
         // Initialize C_unique_id variable
         let C_unique_id;
+
+        // Format scheduled_at before any query construction
+        const formattedScheduledAt = formatDate(scheduled_at);
+
 
         // Check if customer already exists in this queue to handle versioning
         const [existingCustomer] = await connection.query(
@@ -518,108 +571,16 @@ export const createCustomer = async (req, res) => {
             C_unique_id = `${baseUniqueId}__${nextVersion}`;
             console.log(`Latest version found: ${latestVersionId}, creating new version: ${C_unique_id}`);
 
-            // If this is a POST request, create the new version
-            if (req.method === 'POST') {
-                // Continue with customer creation using the new C_unique_id
-                const formattedScheduledAt = scheduled_at && scheduled_at.trim() !== '' 
-                    ? new Date(scheduled_at).toISOString().slice(0, 19).replace('T', ' ')
-                    : null;
+            // Use parameterized query instead of string interpolation
+            const insertQuery = `
+                INSERT INTO customers (
+                    customer_name, phone_no_primary, phone_no_secondary,
+                    email_id, address, country, designation, disposition,
+                    QUEUE_NAME, team_id, agent_name, C_unique_id,
+                    comment, scheduled_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-                // Try to insert with this ID
-                const [result] = await connection.query(
-                    `INSERT INTO customers (
-                        customer_name, 
-                        phone_no_primary, 
-                        phone_no_secondary,
-                        email_id, 
-                        address,
-                        country, 
-                        designation,
-                        disposition, 
-                        QUEUE_NAME, 
-                        team_id,
-                        agent_name, 
-                        C_unique_id, 
-                        comment, 
-                        scheduled_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        customer_name,
-                        phone_no_primary,
-                        phone_no_secondary || null,
-                        email_id || null,
-                        address || null,
-                        country || null,
-                        designation || null,
-                        disposition || 'interested',
-                        QUEUE_NAME,
-                        team_id,
-                        agent_name,
-                        C_unique_id,
-                        comment || null,
-                        formattedScheduledAt
-                    ]
-                );
-
-                await connection.commit();
-
-                // Get the newly created record
-                const [newRecord] = await connection.query(
-                    `SELECT * FROM customers WHERE id = ?`,
-                    [result.insertId]
-                );
-
-                return res.json({
-                    success: true,
-                    message: 'New version created successfully',
-                    customerId: result.insertId,
-                    C_unique_id,
-                    customer: newRecord[0]
-                });
-            }
-
-            // If this is not a POST request, just return the version info
-            return res.status(400).json({
-                success: false,
-                message: `Customer exists with version ${latestVersionId}.`,
-                existingCustomer: latestRecord,
-                baseId: baseUniqueId,
-                currentVersion: latestVersionId,
-                nextVersion: nextVersion,
-                suggestedId: C_unique_id
-            });
-        } else {
-            // New customer, generate new base ID
-            C_unique_id = await generateNextUniqueId(connection, QUEUE_NAME, phone_no_primary, team_id);
-            console.log('Generated new base ID:', C_unique_id);
-        }
-
-        // Format scheduled_at or set to NULL if empty
-        const formattedScheduledAt = scheduled_at && scheduled_at.trim() !== '' 
-            ? new Date(scheduled_at).toISOString().slice(0, 19).replace('T', ' ')
-            : null;
-
-        // Try to insert with this ID
-        const [result] = await connection.query(
-            `INSERT INTO customers (
-                customer_name, 
-                phone_no_primary, 
-                phone_no_secondary,
-                email_id, 
-                address,
-                country, 
-                designation,
-                disposition, 
-                QUEUE_NAME, 
-                team_id,
-                agent_name, 
-                C_unique_id, 
-                comment, 
-                scheduled_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
+            const insertValues = [
                 customer_name,
                 phone_no_primary,
                 phone_no_secondary || null,
@@ -633,12 +594,72 @@ export const createCustomer = async (req, res) => {
                 agent_name,
                 C_unique_id,
                 comment || null,
-                formattedScheduledAt
-            ]
-        );
+                formattedScheduledAt || null
+            ];
+            
+            // Execute the insert with parameters
+            const [result] = await connection.query(insertQuery, insertValues);
+            
+            await connection.commit();
+            
+            // Get the newly created record
+            const [newRecord] = await connection.query(
+                `SELECT * FROM customers WHERE id = ?`,
+                [result.insertId]
+            );
 
+            return res.json({
+                success: true,
+                message: 'New version created successfully',
+                customerId: result.insertId,
+                C_unique_id,
+                customer: newRecord[0]
+            });
+        } else {
+            // New customer, generate new base ID
+            C_unique_id = await generateNextUniqueId(connection, QUEUE_NAME, phone_no_primary, team_id);
+            console.log('Generated new base ID:', C_unique_id);
+        }
+
+        // Continue with customer creation using the new C_unique_id
+        // Debug logging before insert
+        console.log('About to insert with agent_name:', agent_name);
+
+        // Use parameterized query instead of string interpolation
+        const insertQuery = `
+            INSERT INTO customers (
+                customer_name, phone_no_primary, phone_no_secondary,
+                email_id, address, country, designation, disposition,
+                QUEUE_NAME, team_id, agent_name, C_unique_id,
+                comment, scheduled_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+        const insertValues = [
+            customer_name,
+            phone_no_primary,
+            phone_no_secondary || null,
+            email_id || null,
+            address || null,
+            country || null,
+            designation || null,
+            disposition || 'interested',
+            QUEUE_NAME,
+            team_id,
+            agent_name || null,
+            C_unique_id,
+            comment || null,
+            formattedScheduledAt || null
+        ];
+
+        // Debug logging
+        console.log('Query:', insertQuery);
+        console.log('Values:', insertValues);
+
+        // Execute the insert with parameters
+        const [result] = await connection.query(insertQuery, insertValues);
+        
         await connection.commit();
-
+        
         // Get the newly created record
         const [newRecord] = await connection.query(
             `SELECT * FROM customers WHERE id = ?`,
@@ -652,7 +673,6 @@ export const createCustomer = async (req, res) => {
             C_unique_id,
             customer: newRecord[0]
         });
-
     } catch (error) {
         if (connection) {
             await connection.rollback();
