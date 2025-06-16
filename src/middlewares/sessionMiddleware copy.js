@@ -4,10 +4,10 @@ import connectDB from '../db/index.js';
 import jwt from 'jsonwebtoken';
 import { logger } from '../logger.js';
 
-// List of paths that don't require session validation
-const excludedPaths = ['/login', '/logout', '/check-session', '/forgot-password', '/reset-password'];
-    
 export const validateSession = async (req, res, next) => {
+    // List of paths that don't require session validation
+    const excludedPaths = ['/login', '/logout', '/check-session', '/forgot-password', '/reset-password'];
+    
     if (excludedPaths.includes(req.path)) {
         return next();
     }
@@ -23,15 +23,10 @@ export const validateSession = async (req, res, next) => {
         });
     }
 
-    // Only refresh or create session logs when performing WhatsApp connection-related actions
-    const shouldRefresh = req.path.startsWith('/whatsapp/init') ||
-                          req.path.startsWith('/whatsapp/reset');
-
     let connection;
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const pool = connectDB();
-        connection = await pool.getConnection();
+        connection = await connectDB();
 
         // Use a shorter transaction with retry logic
         let retries = 3;
@@ -41,38 +36,32 @@ export const validateSession = async (req, res, next) => {
 
                 // First, clean up old sessions and enforce single-device policy
                 await connection.execute(
-                    'UPDATE login_history SET is_active = false, logout_time = NOW() WHERE entity_id = ? AND entity_type = ? AND is_active = true AND (TIMESTAMPDIFF(HOUR, login_time, NOW()) >= 24 OR device_id != ?)',
-                    [decoded.userId, decoded.role, deviceId]
+                    'UPDATE login_history SET is_active = false, logout_time = NOW() WHERE user_id = ? AND is_active = true AND (TIMESTAMPDIFF(HOUR, login_time, NOW()) >= 24 OR device_id != ?)',
+                    [decoded.userId, deviceId]
                 );
 
                 // Get active session for this user and device
                 const [sessions] = await connection.execute(
-                    'SELECT * FROM login_history WHERE entity_id = ? AND entity_type = ? AND device_id = ? AND is_active = true AND TIMESTAMPDIFF(HOUR, login_time, NOW()) < 24 ORDER BY login_time DESC LIMIT 1',
-                    [decoded.userId, decoded.role, deviceId]
+                    'SELECT * FROM login_history WHERE user_id = ? AND device_id = ? AND is_active = true AND TIMESTAMPDIFF(HOUR, login_time, NOW()) < 24 ORDER BY login_time DESC LIMIT 1',
+                    [decoded.userId, deviceId]
                 );
 
                 if (sessions.length === 0) {
                     // Create a new session for this device
                     await connection.execute(
-                        'INSERT INTO login_history (entity_type, entity_id, device_id, login_time, is_active) VALUES (?, ?, ?, NOW(), true)',
-                        [decoded.role, decoded.userId, deviceId]
+                        'INSERT INTO login_history (user_id, device_id, login_time, is_active) VALUES (?, ?, NOW(), true)',
+                        [decoded.userId, deviceId]
                     );
                     
                     logger.info(`Created new session for user ${decoded.userId} on device ${deviceId}`);
                 } else {
-                    if (shouldRefresh) {
-                        // Avoid overwhelming DB: update only if last update > 60s ago
-                        const [updateResult] = await connection.execute(
-                            'UPDATE login_history SET login_time = NOW() WHERE id = ? AND TIMESTAMPDIFF(SECOND, login_time, NOW()) >= 60',
-                            [sessions[0].id]
-                        );
-                        if (updateResult.affectedRows === 0) {
-                            // Skip log if no row updated
-                            await connection.commit();
-                            break;
-                        }
-                        logger.info(`Updated session ${sessions[0].id} for user ${decoded.userId}`);
-                    }
+                    // Update last activity time for existing session
+                    await connection.execute(
+                        'UPDATE login_history SET login_time = NOW() WHERE id = ?',
+                        [sessions[0].id]
+                    );
+                    
+                    logger.info(`Updated session ${sessions[0].id} for user ${decoded.userId}`);
                 }
 
                 // No active sessions found, allow new session

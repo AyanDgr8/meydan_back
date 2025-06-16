@@ -226,20 +226,42 @@ CREATE TABLE IF NOT EXISTS instances (
     UNIQUE KEY unique_register_id (register_id)
 );
 
--- Create trigger to automatically generate instance_id from admin's name
+-- 1. Drop the old FK
+ALTER TABLE instances
+  DROP FOREIGN KEY instances_ibfk_1;
+
+-- 2. Add a new FK that targets users.email
+ALTER TABLE instances
+  ADD CONSTRAINT instances_user_fk
+  FOREIGN KEY (register_id)
+  REFERENCES users(email)
+  ON DELETE CASCADE;
+
+-- Create trigger to automatically generate instance_id from admin's username
+DROP TRIGGER IF EXISTS before_instance_insert;
 DELIMITER //
-CREATE TRIGGER before_instance_insert 
+CREATE TRIGGER before_instance_insert
 BEFORE INSERT ON instances
 FOR EACH ROW
 BEGIN
-    DECLARE first_name VARCHAR(255);
-    SELECT SUBSTRING_INDEX(name, ' ', 1) INTO first_name
-    FROM admin 
-    WHERE email = NEW.register_id;
-    
-    SET NEW.instance_id = first_name;
-END//
+    IF NEW.instance_id IS NULL OR NEW.instance_id = '' THEN
+        DECLARE first_name VARCHAR(255);
+        SELECT SUBSTRING_INDEX(username,' ',1)
+          INTO first_name
+          FROM users
+         WHERE email = NEW.register_id
+         LIMIT 1;
+        SET NEW.instance_id = first_name;
+    END IF;
+END$$
 DELIMITER ;
+
+
+
+
+
+
+
 
 -- Insert default values for disposition
 INSERT INTO customer_field_values (field_name, field_value) VALUES 
@@ -302,12 +324,11 @@ CREATE TABLE `scheduler` (
 -- ********************
 -- ********************
 -- ********************
+-- *******************
 -- 27th ,may 2025
--- ********************
--- ********************
--- **********************
-
-
+-- *******************
+-- *******************
+-- *******************
 
 -- Create receptionist table
 CREATE TABLE IF NOT EXISTS receptionist (

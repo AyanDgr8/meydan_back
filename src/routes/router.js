@@ -45,18 +45,20 @@ import { authenticateToken } from '../middlewares/auth.js';
 import { checkCustomerByPhone } from '../controllers/newnum.js';
 
 import { sendNewCustomerEmail } from '../controllers/sendEmail.js';
+
 import { 
     sendNewCustomerWhatsApp, sendCustomerNotification
 } from '../controllers/sendWhatsapp.js';
 
-// import { 
-//   generateQRCode, 
-//   getConnectionStatus, 
-//   resetInstance, 
-//   saveInstanceToDB, 
-//   getUserInstances, 
-//   updateInstance 
-// } from '../controllers/whatsapp.js';
+import { 
+  generateQRCode, 
+  getConnectionStatus, 
+  resetInstance, 
+  saveInstanceToDB, 
+  getUserInstances, 
+  updateInstance,
+  sendMessage 
+} from '../controllers/whatsapp.js';
 
 import { validateSession } from '../middlewares/sessionMiddleware.js';
 
@@ -208,14 +210,15 @@ router.post('/send-whatsapp', authenticateToken, sendNewCustomerWhatsApp);
 // router.get('/whatsapp/init', authenticateToken, initWhatsApp);
 // router.get('/whatsapp/status', authenticateToken, getStatus);
 // router.post('/whatsapp/reset', authenticateToken, resetWhatsApp);
-// router.get('/whatsapp/init/:instanceId', authenticateToken, validateSession, generateQRCode);
-// router.get('/whatsapp/status/:instanceId', authenticateToken, validateSession, getConnectionStatus);
-// router.post('/whatsapp/reset/:instanceId', authenticateToken, validateSession, resetInstance);
+router.get('/whatsapp/init/:instanceId', authenticateToken, validateSession, generateQRCode);
+router.get('/whatsapp/status/:instanceId', authenticateToken, validateSession, getConnectionStatus);
+router.post('/whatsapp/reset/:instanceId', authenticateToken, validateSession, resetInstance);
+router.post('/:instanceId/send-message', authenticateToken, validateSession, sendMessage);
 
-// // Instance management routes
-// router.post('/instances', authenticateToken, validateSession, saveInstanceToDB);
-// router.get('/instances/:register_id', authenticateToken, validateSession, getUserInstances);
-// router.put('/instances/:instance_id', authenticateToken, validateSession, updateInstance);
+// Instance management routes
+router.post('/instances', authenticateToken, validateSession, saveInstanceToDB);
+router.get('/instances/:register_id', authenticateToken, validateSession, getUserInstances);
+router.put('/instances/:instance_id', authenticateToken, validateSession, updateInstance);
 
 // Brand routes
 router.post('/brand', authenticateToken, createBrand);
