@@ -32,13 +32,16 @@ export const sendCustomerNotification = async (customerData, teamEmail) => {
             throw new Error('Business center email credentials not found');
         }
 
-        // Create transporter with business center credentials
+        // Create transporter with business center credentials (force IPv4 and explicit host/port)
         const transporter = nodemailer.createTransport({
-            service: 'gmail',
+            host: 'smtp.gmail.com',      // Explicit SMTP host
+            port: 465,                  // Use SSL port; switch to 587 with secure:false if needed
+            secure: true,               // True for 465, false for 587 + STARTTLS
             auth: {
                 user: businessCenter[0].business_email,
                 pass: businessCenter[0].business_password
-            }
+            },
+            family: 4                   // Force IPv4 to avoid IPv6 connectivity issues
         });
 
         const {
