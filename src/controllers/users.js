@@ -9,6 +9,7 @@ export const createUser = async (req, res) => {
     const {
         username,
         department,
+        extension,
         email,
         mobile_num,
         mobile_num_2,
@@ -38,17 +39,17 @@ export const createUser = async (req, res) => {
         try {
             await conn.beginTransaction();
 
-            // Check if user already exists in the same team
+            // Check if user with same email, extension, or mobile number already exists in the same team
             const [existingUser] = await conn.query(
-                'SELECT * FROM team_members WHERE (email = ? OR username = ? OR mobile_num = ?) AND team_id = ?',
-                [email, username, mobile_num, team_id]
+                'SELECT * FROM team_members WHERE (email = ? OR mobile_num = ? OR (extension = ? AND extension IS NOT NULL)) AND team_id = ?',
+                [email, mobile_num, extension, team_id]
             );
 
             if (existingUser.length > 0) {
                 await conn.rollback();
                 let errorField = '';
                 if (existingUser[0].email === email) errorField = 'email';
-                else if (existingUser[0].username === username) errorField = 'username';
+                else if (existingUser[0].extension === extension) errorField = 'extension';
                 else errorField = 'mobile number';
                 
                 return res.status(400).json({ 
@@ -59,8 +60,8 @@ export const createUser = async (req, res) => {
 
             // Create user
             const [userResult] = await conn.query(
-                'INSERT INTO team_members (username, department, email, mobile_num, mobile_num_2, team_id) VALUES (?, ?, ?, ?, ?, ?)',
-                [username, department, email, mobile_num, mobile_num_2, team_id]
+                'INSERT INTO team_members (username, department, extension, email, mobile_num, mobile_num_2, team_id, designation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [username, department, extension, email, mobile_num, mobile_num_2, team_id, designation]
             );
 
             await conn.commit();
@@ -154,6 +155,7 @@ export const updateTeamMember = async (req, res) => {
         const {
             username,
             department,
+            extension,
             designation,
             email,
             mobile_num,
@@ -182,6 +184,7 @@ export const updateTeamMember = async (req, res) => {
             `UPDATE team_members 
              SET username = ?, 
                  designation = ?,
+                 extension = ?,
                  department = ?,
                  email = ?,
                  mobile_num = ?,
@@ -190,6 +193,7 @@ export const updateTeamMember = async (req, res) => {
             [
                 username,
                 designation,
+                extension,
                 department,
                 email,
                 mobile_num,

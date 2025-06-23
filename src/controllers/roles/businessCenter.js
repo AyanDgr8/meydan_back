@@ -393,6 +393,7 @@ export const getBusinessDetails = async (req, res) => {
                                     'id', tm.id,
                                     'username', tm.username,
                                     'email', tm.email,
+                                    'extension', tm.extension,
                                     'designation', tm.designation
                                 )
                             )
@@ -659,15 +660,15 @@ export const createBusinessAssociate = async (req, res) => {
         const pool = connectDB();
         conn = await pool.getConnection();
         const businessId = req.params.id;
-        const { username, email, mobile_num, mobile_num_2, team_id, department, designation } = req.body;
+        const { username, email, mobile_num, mobile_num_2, extension, team_id, department, designation } = req.body;
 
         // Start transaction
         await conn.beginTransaction();
 
         try {
             // Validate required fields
-            if (!username || !email || !mobile_num || !team_id) {
-                throw new Error('Username, email, mobile number, and team ID are required');
+            if (!username || !email || !mobile_num || !extension || !team_id) {
+                throw new Error('Username, email, mobile number, extension, and team ID are required');
             }
 
             // Check if team belongs to the business center and get brand_id
@@ -700,8 +701,8 @@ export const createBusinessAssociate = async (req, res) => {
 
             // Check for existing user with same username or email only within the same team
             const [existingUser] = await conn.query(
-                'SELECT id FROM team_members WHERE (username = ? OR email = ? OR mobile_num = ?) AND team_id = ?',
-                [username, email, mobile_num, team_id]
+                'SELECT id FROM team_members WHERE (username = ? OR email = ? OR mobile_num = ? OR extension = ?) AND team_id = ?',
+                [username, email, mobile_num, extension, team_id]
             );
 
             if (existingUser.length > 0) {
@@ -715,11 +716,12 @@ export const createBusinessAssociate = async (req, res) => {
                     email,
                     mobile_num,
                     mobile_num_2,
+                    extension,
                     department,
                     designation,
                     team_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [username, email, mobile_num, mobile_num_2, department, designation, team_id]
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [username, email, mobile_num, mobile_num_2, extension, department, designation, team_id]
             );
 
             await conn.commit();
@@ -730,6 +732,7 @@ export const createBusinessAssociate = async (req, res) => {
                     id: result.insertId,
                     username,
                     email,
+                    extension,
                     mobile_num,
                     mobile_num_2,   
                     department,

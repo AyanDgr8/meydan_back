@@ -195,21 +195,94 @@ export const getConnectionStatus = async (req, res) => {
         const [instance] = await conn.query('SELECT * FROM instances WHERE instance_id = ? AND register_id = ?', [instanceId, registerId]);
 
         if (!instance.length) {
+            // Check if user already has any instance
+            const [existingUserInstance] = await conn.query('SELECT * FROM instances WHERE register_id = ?', [registerId]);
+            
+            if (existingUserInstance.length > 0) {
+                // User already has an instance, return that instead of creating a new one
+                const existingInstanceId = existingUserInstance[0].instance_id;
+                logger.info(`User ${registerId} already has instance ${existingInstanceId}, returning existing instance`);
+                
+                const instanceData = instances[existingInstanceId];
+                const dbStatus = existingUserInstance[0].status;
+                
+                return res.json({
+                    success: true,
+                    status: instanceData?.status || dbStatus,
+                    message: `WhatsApp is ${instanceData?.status || dbStatus} (using existing instance)`,
+                    instanceId: existingInstanceId,
+                    qrCode: instanceData?.qrCode,
+                    lastUpdate: instanceData?.lastUpdate
+                });
+            }
+            
             // Auto-create a new instance entry for this user so that the first status call succeeds
             const [userRows] = await conn.query('SELECT email FROM users WHERE email = ?', [registerId]);
             if (userRows.length) {
-                await conn.query(
-                    'INSERT INTO instances (instance_id, register_id, status) VALUES (?, ?, ?)',
-                    [instanceId, registerId, 'disconnected']
-                );
-
-                return res.json({
-                    success: true,
-                    status: 'disconnected',
-                    message: 'Instance created, waiting for initialization',
-                    qrCode: null,
-                    lastUpdate: null
-                });
+                // Check if this instance_id already exists in the table (for any user)
+                const [existingInstance] = await conn.query('SELECT instance_id FROM instances WHERE instance_id = ?', [instanceId]);
+                
+                let finalInstanceId = instanceId;
+                
+                if (existingInstance.length > 0) {
+                    // Need to create a unique instance_id with suffix
+                    const baseInstanceId = instanceId;
+                    let counter = 1;
+                    let isUnique = false;
+                    
+                    while (!isUnique) {
+                        finalInstanceId = `${baseInstanceId}_${counter}`;
+                        // Check if this new instance_id already exists
+                        const [checkInstance] = await conn.query('SELECT instance_id FROM instances WHERE instance_id = ?', [finalInstanceId]);
+                        if (checkInstance.length === 0) {
+                            isUnique = true;
+                        } else {
+                            counter++;
+                        }
+                    }
+                    
+                    logger.info(`Created unique instance ID: ${finalInstanceId} for user ${registerId}`);
+                }
+                
+                try {
+                    await conn.query(
+                        'INSERT INTO instances (instance_id, register_id, status) VALUES (?, ?, ?)',
+                        [finalInstanceId, registerId, 'disconnected']
+                    );
+                    
+                    return res.json({
+                        success: true,
+                        status: 'disconnected',
+                        message: 'Instance created, waiting for initialization',
+                        instanceId: finalInstanceId, // Return the potentially modified instance ID
+                        qrCode: null,
+                        lastUpdate: null
+                    });
+                } catch (insertError) {
+                    // If we still get a duplicate error, try one more time with a timestamp suffix
+                    if (insertError.code === 'ER_DUP_ENTRY') {
+                        const timestamp = Date.now();
+                        finalInstanceId = `${instanceId}_${timestamp}`;
+                        logger.info(`Retry with timestamp-based instance ID: ${finalInstanceId} for user ${registerId}`);
+                        
+                        await conn.query(
+                            'INSERT INTO instances (instance_id, register_id, status) VALUES (?, ?, ?)',
+                            [finalInstanceId, registerId, 'disconnected']
+                        );
+                        
+                        return res.json({
+                            success: true,
+                            status: 'disconnected',
+                            message: 'Instance created with timestamp suffix, waiting for initialization',
+                            instanceId: finalInstanceId,
+                            qrCode: null,
+                            lastUpdate: null
+                        });
+                    } else {
+                        // Re-throw other errors
+                        throw insertError;
+                    }
+                }
             } else {
                 // Cannot create due to FK, just respond with placeholder status
                 return res.json({

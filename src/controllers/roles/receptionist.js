@@ -13,6 +13,7 @@ export const createReceptionist = async (req, res) => {
             receptionist_name,
             receptionist_phone,
             receptionist_email,
+            rec_password,
             business_center_id,
             rec_other_detail
         } = req.body;
@@ -83,13 +84,15 @@ export const createReceptionist = async (req, res) => {
                 receptionist_name,
                 receptionist_phone,
                 receptionist_email,
+                rec_password,
                 business_center_id,
                 rec_other_detail
-            ) VALUES (?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
             [
                 receptionist_name,
                 receptionist_phone,
                 receptionist_email,
+                rec_password,
                 business_center_id,
                 rec_other_detail || ''
             ]
@@ -236,6 +239,7 @@ export const updateReceptionist = async (req, res) => {
             receptionist_name,
             receptionist_phone,
             receptionist_email,
+            rec_password,
             business_center_id,
             rec_other_detail
         } = req.body;
@@ -272,6 +276,7 @@ export const updateReceptionist = async (req, res) => {
                 receptionist_name = ?,
                 receptionist_phone = ?,
                 receptionist_email = ?,
+                rec_password = ?,
                 business_center_id = ?,
                 rec_other_detail = ?
             WHERE id = ?`,
@@ -279,6 +284,7 @@ export const updateReceptionist = async (req, res) => {
                 receptionist_name,
                 receptionist_phone,
                 receptionist_email,
+                rec_password,
                 business_center_id,
                 rec_other_detail,
                 req.params.id

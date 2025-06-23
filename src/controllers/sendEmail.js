@@ -61,8 +61,7 @@ export const sendCustomerNotification = async (customerData, teamEmail) => {
         // Format the email content with proper handling of undefined values
         const emailContent = `
             <h2 style="color: #1976d2">New Customer Query - ${customer_name || 'N/A'}</h2>
-            <p style="color: #364C63">Dear ${QUEUE_NAME || 'Team'},</p>
-            <p style="color: #364C63">We've received a query from a new customer that requires your attention. Below are the details collected:</p>
+            <p style="color: #364C63">Greetings! We received enquiry for the below client, kindly please assist them for the below mentioned details:</p>
             <h3 style="color: #EF6F53">Customer Information:</h3>
             <ul>
                 <li>Name: ${customer_name || 'N/A'}</li>
@@ -76,7 +75,7 @@ export const sendCustomerNotification = async (customerData, teamEmail) => {
                 <li>Disposition: ${disposition || 'N/A'}</li>
                 <li>Unique ID: ${C_unique_id || 'N/A'}</li>
             </ul>
-            <p style="color: #364C63">Please take appropriate action based on the customer's requirements.<br>Best regards,<br>CRM System</p>
+            <p style="color: #364C63">Thank you! <br> Regards</p>
         `;
 
         await transporter.sendMail({

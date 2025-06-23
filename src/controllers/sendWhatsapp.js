@@ -45,8 +45,8 @@ export const sendCustomerNotification = async (customerData, teamPhone, instance
     // Format the message content
     const messageContent = `*New Customer Query - ${customer_name || 'N/A'}*
 
-Dear ${displayQueueName},
-We've received a query from a new customer that requires your attention. Below are the details collected:
+Greetings!,
+We received enquiry for the below client, kindly please assist them for the below mentioned details:
 
 Customer Information:
 *Name* : ${customer_name || 'N/A'}
@@ -60,9 +60,8 @@ Customer Information:
 *Unique ID* : ${C_unique_id || 'N/A'}
 *Message* : ${comment || 'N/A'}
 
-Please take appropriate action based on the customer's requirements
-Best regards,
-CRM System`;
+Thank you!
+Regards`;
 
     try {
         const instanceId = resolveInstanceId(instanceIdParam);

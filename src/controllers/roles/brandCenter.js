@@ -269,6 +269,14 @@ export const updateBrand = async (req, res) => {
             );
         }
 
+        // If username has changed, update the associated user's name
+        if (brand_name && brand_name !== currentBrand[0].brand_name) {
+            await conn.query(
+                'UPDATE users SET username = ? WHERE brand_id = ? AND role_id = (SELECT id FROM roles WHERE role_name = "brand_user")',
+                [brand_name, req.params.id]
+            );
+        }
+
         await conn.commit();
 
         const [updatedBrand] = await conn.query(
@@ -427,6 +435,7 @@ export const getBrandHierarchy = async (req, res) => {
                                 JSON_OBJECT(
                                     'id', tm.id,
                                     'username', tm.username,
+                                    'extension', tm.extension,
                                     'email', tm.email,
                                     'designation', tm.designation
                                 )

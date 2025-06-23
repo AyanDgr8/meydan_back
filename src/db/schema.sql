@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS team_members (
     UNIQUE KEY unique_team_mobile (team_id, mobile_num)
 );
 
+alter table team_members add column extension VARCHAR(20) DEFAULT NULL after department;
+
 -- Create login_history table
 CREATE TABLE `login_history` (
     `id` int NOT NULL AUTO_INCREMENT,
@@ -225,6 +227,18 @@ CREATE TABLE IF NOT EXISTS instances (
     FOREIGN KEY (register_id) REFERENCES admin(email) ON DELETE CASCADE,
     UNIQUE KEY unique_register_id (register_id)
 );
+
+-- ****************
+-- First drop the foreign key constraint
+ALTER TABLE instances DROP FOREIGN KEY instances_user_fk;
+
+-- Finally recreate the foreign key constraint
+ALTER TABLE instances 
+  ADD CONSTRAINT instances_user_fk
+  FOREIGN KEY (register_id)
+  REFERENCES users(email)
+  ON DELETE CASCADE;
+-- ****************
 
 -- 1. Drop the old FK
 ALTER TABLE instances
@@ -344,6 +358,8 @@ CREATE TABLE IF NOT EXISTS receptionist (
     FOREIGN KEY (business_center_id) REFERENCES business_center(id) ON DELETE CASCADE,
     FOREIGN KEY (brand_id) REFERENCES brand(id) ON DELETE CASCADE
 );
+
+alter table receptionist add column rec_password VARCHAR(255) after receptionist_email;
 
 DELIMITER $$
 
@@ -834,3 +850,69 @@ END
 //
 
 DELIMITER ;
+
+
+
+
+-- ****************************
+-- Reports Table (18 June 2025)
+-- ****************************
+CREATE TABLE IF NOT EXISTS reports_user_charges (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_name VARCHAR(100) NULL,
+    extension VARCHAR(100) NULL,
+    tags VARCHAR(100) NULL,
+    total_calls VARCHAR(100) NULL,
+    inbound_total_calls VARCHAR(100) NULL,
+    outbound_total_calls VARCHAR(100) NULL,
+    minutes VARCHAR(100) NULL,
+    amount VARCHAR(100) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_name (user_name)
+);
+
+-- ****************************
+-- Reports Outbound Calls Table (18 June 2025)
+-- ****************************
+CREATE TABLE IF NOT EXISTS reports_outbound_calls (
+    `ID` VARCHAR(100) NULL,
+    `Call ID` VARCHAR(100) NULL,
+    `Other Leg Call ID` VARCHAR(100) NULL,
+    `Call Start Time` VARCHAR(100) NULL,
+    `Hangup time` VARCHAR(100) NULL,
+    `Caller ID Name` VARCHAR(100) NULL,
+    `Caller ID Number` VARCHAR(100) NULL,
+    `User Name` VARCHAR(100) NULL,
+    `Extension` VARCHAR(100) NULL,
+    `User email` VARCHAR(100) NULL,
+    `Dialed Number` VARCHAR(100) NULL,
+    `Outbound Dialed Number` VARCHAR(100) NULL,
+    `Duration seconds` VARCHAR(100) NULL,
+    `Billing seconds (Talked Duration)` VARCHAR(100) NULL,
+    `Wait Duration` VARCHAR(100) NULL,
+    `Hangup Cause` VARCHAR(100) NULL,
+    `Media Recording ID` VARCHAR(100) NULL,
+    `Media Name` VARCHAR(100) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_name_outbound (`User Name`)
+);
+
+-- ****************************
+-- Reports Inbound Calls Table (18 June 2025)
+-- ****************************
+CREATE TABLE IF NOT EXISTS reports_inbound_calls (
+    `ID` VARCHAR(100) NULL,
+    `Call ID` VARCHAR(100) NULL,
+    `Other Leg Call ID` VARCHAR(100) NULL,
+    `Start Time` VARCHAR(100) NULL,
+    `Caller ID Name` VARCHAR(100) NULL,
+    `Caller ID Number` VARCHAR(100) NULL,
+    `Dialed Number` VARCHAR(100) NULL,
+    `Callee ID Name` VARCHAR(100) NULL,
+    `Callee ID Number` VARCHAR(100) NULL,
+    `Duration seconds` VARCHAR(100) NULL,
+    `Billing seconds` VARCHAR(100) NULL,
+    `Hangup Cause` VARCHAR(100) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_caller_id_inbound (`Caller ID Number`)
+);
