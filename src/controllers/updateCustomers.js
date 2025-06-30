@@ -167,6 +167,31 @@ export const updateCustomer = async (req, res) => {
         updateValues.push(customerId);
         await connection.execute(updateQuery, updateValues);
 
+        // If the scheduled_at field was updated, create a corresponding scheduler record
+        const schedChange = updateLogs.find(l => l.field === 'scheduled_at');
+        if (schedChange) {
+          // Prevent duplicate scheduler entries for the exact same datetime
+          const [existing] = await connection.execute(
+            `SELECT id FROM scheduler WHERE customer_id = ? AND scheduled_at = ? LIMIT 1`,
+            [customerId, schedChange.newValue]
+          );
+          if (existing.length === 0) {
+            await connection.execute(
+              `INSERT INTO scheduler (customer_id, C_unique_id, scheduled_at, status, created_by, team_id, notes)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [
+                customerId,
+                cUniqueId,
+                schedChange.newValue,
+                'pending',
+                req.user.username,
+                newTeamId,
+                'Follow-up call'
+              ]
+            );
+          }
+        }
+
         // Log the changes using the insertChangeLog function
         await insertChangeLog(connection, customerId, cUniqueId, updateLogs, req.user.username, newTeamId);
 

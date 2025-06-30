@@ -916,3 +916,24 @@ CREATE TABLE IF NOT EXISTS reports_inbound_calls (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_caller_id_inbound (`Caller ID Number`)
 );
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
